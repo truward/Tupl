@@ -182,6 +182,15 @@ implements <a href="../../../org/cojen/tupl/Cursor.html" title="interface in org
  cursor is unpositioned.</div>
 </td>
 </tr>
+<tr class="altColor">
+<td class="colFirst"><code><a href="../../../org/cojen/tupl/LockResult.html" title="enum in org.cojen.tupl">LockResult</a></code></td>
+<td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractCursor.html#skip(long,%20byte[],%20boolean)">skip</a></strong>(long&nbsp;amount,
+    byte[]&nbsp;limitKey,
+    boolean&nbsp;inclusive)</code>
+<div class="block">Moves the Cursor by a relative amount of entries, stopping sooner if the limit key is
+ reached.</div>
+</td>
+</tr>
 </table>
 <ul class="blockList">
 <li class="blockList"><a name="methods_inherited_from_class_java.lang.Object">
@@ -260,6 +269,35 @@ implements <a href="../../../org/cojen/tupl/Cursor.html" title="interface in org
 <dt><span class="strong">Parameters:</span></dt><dd><code>rkey</code> - key to compare to</dd><dd><code>offset</code> - offset into rkey</dd><dd><code>length</code> - length of rkey</dd>
 <dt><span class="strong">Returns:</span></dt><dd>a negative integer, zero, or a positive integer as current key
  is less than, equal to, or greater than the rkey.</dd></dl>
+</li>
+</ul>
+<a name="skip(long, byte[], boolean)">
+<!--   -->
+</a>
+<ul class="blockList">
+<li class="blockList">
+<h4>skip</h4>
+<pre>public&nbsp;<a href="../../../org/cojen/tupl/LockResult.html" title="enum in org.cojen.tupl">LockResult</a>&nbsp;skip(long&nbsp;amount,
+              byte[]&nbsp;limitKey,
+              boolean&nbsp;inclusive)
+                throws <a href="http://docs.oracle.com/javase/7/docs/api/java/io/IOException.html?is-external=true" title="class or interface in java.io">IOException</a></pre>
+<div class="block">Moves the Cursor by a relative amount of entries, stopping sooner if the limit key is
+ reached. Pass a positive amount to skip forward, and pass a negative amount to skip
+ backwards. If the limit key is reached, or if less than the given amount of entries are
+ available, the Cursor is reset.
+
+ <p>Skipping by 1 is equivalent to calling <a href="../../../org/cojen/tupl/Cursor.html#nextLe(byte[])"><code>nextLe</code></a>, <a href="../../../org/cojen/tupl/Cursor.html#nextLt(byte[])"><code>nextLt</code></a>
+ or <a href="../../../org/cojen/tupl/Cursor.html#next()"><code>next</code></a>, depending on which type of limit was provided. Likewise, skipping
+ by -1 is equivalent to calling <a href="../../../org/cojen/tupl/Cursor.html#previousGe(byte[])"><code>previousGe</code></a>, <a href="../../../org/cojen/tupl/Cursor.html#previousGt(byte[])"><code>previousGt</code></a> or <a href="../../../org/cojen/tupl/Cursor.html#previous()"><code>previous</code></a>. A skip of 0 merely checks and returns the
+ lock state for the current key. Lock acquisition only applies to the target entry
+ &mdash; no locks are acquired for entries in between.</div>
+<dl>
+<dt><strong>Specified by:</strong></dt>
+<dd><code><a href="../../../org/cojen/tupl/Cursor.html#skip(long,%20byte[],%20boolean)">skip</a></code>&nbsp;in interface&nbsp;<code><a href="../../../org/cojen/tupl/Cursor.html" title="interface in org.cojen.tupl">Cursor</a></code></dd>
+<dd><code>limitKey</code> - limit key; pass null for no limit</dd><dd><code>inclusive</code> - true if limit is inclusive, false for exclusive</dd>
+<dt><span class="strong">Returns:</span></dt><dd><a href="../../../org/cojen/tupl/LockResult.html#UNOWNED"><code>UNOWNED</code></a>, <a href="../../../org/cojen/tupl/LockResult.html#ACQUIRED"><code>ACQUIRED</code></a>, <a href="../../../org/cojen/tupl/LockResult.html#OWNED_SHARED"><code>OWNED_SHARED</code></a>, <a href="../../../org/cojen/tupl/LockResult.html#OWNED_UPGRADABLE"><code>OWNED_UPGRADABLE</code></a>, or <a href="../../../org/cojen/tupl/LockResult.html#OWNED_EXCLUSIVE"><code>OWNED_EXCLUSIVE</code></a></dd>
+<dt><span class="strong">Throws:</span></dt>
+<dd><code><a href="http://docs.oracle.com/javase/7/docs/api/java/io/IOException.html?is-external=true" title="class or interface in java.io">IOException</a></code></dd></dl>
 </li>
 </ul>
 <a name="commit(byte[])">
