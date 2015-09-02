@@ -218,8 +218,11 @@ extends <a href="../../../org/cojen/tupl/Transformer.html" title="class in org.c
 <li class="blockList">
 <h4>isAllowed</h4>
 <pre>public abstract&nbsp;boolean&nbsp;isAllowed(byte[]&nbsp;key,
-                byte[]&nbsp;value)</pre>
+                byte[]&nbsp;value)
+                           throws <a href="http://docs.oracle.com/javase/7/docs/api/java/io/IOException.html?is-external=true" title="class or interface in java.io">IOException</a></pre>
 <div class="block">Return true if the given key and value are not to be filtered out.</div>
+<dl><dt><span class="strong">Throws:</span></dt>
+<dd><code><a href="http://docs.oracle.com/javase/7/docs/api/java/io/IOException.html?is-external=true" title="class or interface in java.io">IOException</a></code></dd></dl>
 </li>
 </ul>
 <a name="transformValue(byte[], byte[], byte[])">
@@ -230,13 +233,16 @@ extends <a href="../../../org/cojen/tupl/Transformer.html" title="class in org.c
 <h4>transformValue</h4>
 <pre>public final&nbsp;byte[]&nbsp;transformValue(byte[]&nbsp;value,
                     byte[]&nbsp;key,
-                    byte[]&nbsp;tkey)</pre>
+                    byte[]&nbsp;tkey)
+                            throws <a href="http://docs.oracle.com/javase/7/docs/api/java/io/IOException.html?is-external=true" title="class or interface in java.io">IOException</a></pre>
 <div class="block">Calls the <a href="../../../org/cojen/tupl/Filter.html#isAllowed(byte[],%20byte[])"><code>isAllowed</code></a> method.</div>
 <dl>
 <dt><strong>Specified by:</strong></dt>
 <dd><code><a href="../../../org/cojen/tupl/Transformer.html#transformValue(byte[],%20byte[],%20byte[])">transformValue</a></code>&nbsp;in class&nbsp;<code><a href="../../../org/cojen/tupl/Transformer.html" title="class in org.cojen.tupl">Transformer</a></code></dd>
 <dt><span class="strong">Parameters:</span></dt><dd><code>value</code> - nullable value to transform</dd><dd><code>key</code> - non-null untransformed key associated with the value</dd><dd><code>tkey</code> - non-null transformed key associated with the value</dd>
-<dt><span class="strong">Returns:</span></dt><dd>transformed value or null to discard entry</dd></dl>
+<dt><span class="strong">Returns:</span></dt><dd>transformed value or null to discard entry</dd>
+<dt><span class="strong">Throws:</span></dt>
+<dd><code><a href="http://docs.oracle.com/javase/7/docs/api/java/io/IOException.html?is-external=true" title="class or interface in java.io">IOException</a></code></dd></dl>
 </li>
 </ul>
 <a name="inverseTransformValue(byte[], byte[], byte[])">
@@ -248,7 +254,8 @@ extends <a href="../../../org/cojen/tupl/Transformer.html" title="class in org.c
 <pre>public final&nbsp;byte[]&nbsp;inverseTransformValue(byte[]&nbsp;tvalue,
                            byte[]&nbsp;key,
                            byte[]&nbsp;tkey)
-                                   throws <a href="../../../org/cojen/tupl/ViewConstraintException.html" title="class in org.cojen.tupl">ViewConstraintException</a></pre>
+                                   throws <a href="http://docs.oracle.com/javase/7/docs/api/java/io/IOException.html?is-external=true" title="class or interface in java.io">IOException</a>,
+                                          <a href="../../../org/cojen/tupl/ViewConstraintException.html" title="class in org.cojen.tupl">ViewConstraintException</a></pre>
 <div class="block">Calls the <a href="../../../org/cojen/tupl/Filter.html#isAllowed(byte[],%20byte[])"><code>isAllowed</code></a> method.</div>
 <dl>
 <dt><strong>Specified by:</strong></dt>
@@ -256,7 +263,8 @@ extends <a href="../../../org/cojen/tupl/Transformer.html" title="class in org.c
 <dt><span class="strong">Parameters:</span></dt><dd><code>tvalue</code> - nullable value to transform</dd><dd><code>key</code> - non-null untransformed key associated with the value</dd><dd><code>tkey</code> - non-null transformed key associated with the value</dd>
 <dt><span class="strong">Returns:</span></dt><dd>inverse transformed value, or null to delete the value</dd>
 <dt><span class="strong">Throws:</span></dt>
-<dd><code><a href="../../../org/cojen/tupl/ViewConstraintException.html" title="class in org.cojen.tupl">ViewConstraintException</a></code> - if inverse transformation of given value is not supported</dd></dl>
+<dd><code><a href="../../../org/cojen/tupl/ViewConstraintException.html" title="class in org.cojen.tupl">ViewConstraintException</a></code> - if inverse transformation of given value is not supported</dd>
+<dd><code><a href="http://docs.oracle.com/javase/7/docs/api/java/io/IOException.html?is-external=true" title="class or interface in java.io">IOException</a></code></dd></dl>
 </li>
 </ul>
 </li>
