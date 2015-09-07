@@ -242,11 +242,19 @@ extends <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Object.html?
 </tr>
 <tr class="altColor">
 <td class="colFirst"><code>static boolean</code></td>
+<td class="colLast"><code><strong><a href="../../../../org/cojen/tupl/io/Utils.html#decrement(byte[],%20int,%20int)">decrement</a></strong>(byte[]&nbsp;value,
+         int&nbsp;start,
+         int&nbsp;end)</code>
+<div class="block">Subtracts one from an unsigned integer, represented as a byte array.</div>
+</td>
+</tr>
+<tr class="rowColor">
+<td class="colFirst"><code>static boolean</code></td>
 <td class="colLast"><code><strong><a href="../../../../org/cojen/tupl/io/Utils.html#delete(java.nio.Buffer)">delete</a></strong>(<a href="http://docs.oracle.com/javase/7/docs/api/java/nio/Buffer.html?is-external=true" title="class or interface in java.nio">Buffer</a>&nbsp;bb)</code>
 <div class="block">Attempt to delete the given direct or mapped byte buffer.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code>static void</code></td>
 <td class="colLast"><code><strong><a href="../../../../org/cojen/tupl/io/Utils.html#encodeInt48BE(byte[],%20int,%20long)">encodeInt48BE</a></strong>(byte[]&nbsp;b,
              int&nbsp;offset,
@@ -254,7 +262,7 @@ extends <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Object.html?
 <div class="block">Encodes a 48-bit integer, in big-endian format.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code>static void</code></td>
 <td class="colLast"><code><strong><a href="../../../../org/cojen/tupl/io/Utils.html#encodeInt48LE(byte[],%20int,%20long)">encodeInt48LE</a></strong>(byte[]&nbsp;b,
              int&nbsp;offset,
@@ -262,7 +270,7 @@ extends <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Object.html?
 <div class="block">Encodes a 48-bit integer, in little-endian format.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code>static void</code></td>
 <td class="colLast"><code><strong><a href="../../../../org/cojen/tupl/io/Utils.html#encodeIntBE(byte[],%20int,%20int)">encodeIntBE</a></strong>(byte[]&nbsp;b,
            int&nbsp;offset,
@@ -270,7 +278,7 @@ extends <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Object.html?
 <div class="block">Encodes a 32-bit integer, in big-endian format.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code>static void</code></td>
 <td class="colLast"><code><strong><a href="../../../../org/cojen/tupl/io/Utils.html#encodeIntLE(byte[],%20int,%20int)">encodeIntLE</a></strong>(byte[]&nbsp;b,
            int&nbsp;offset,
@@ -278,7 +286,7 @@ extends <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Object.html?
 <div class="block">Encodes a 32-bit integer, in little-endian format.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code>static void</code></td>
 <td class="colLast"><code><strong><a href="../../../../org/cojen/tupl/io/Utils.html#encodeLongBE(byte[],%20int,%20long)">encodeLongBE</a></strong>(byte[]&nbsp;b,
             int&nbsp;offset,
@@ -286,7 +294,7 @@ extends <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Object.html?
 <div class="block">Encodes a 64-bit integer, in big-endian format.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code>static void</code></td>
 <td class="colLast"><code><strong><a href="../../../../org/cojen/tupl/io/Utils.html#encodeLongLE(byte[],%20int,%20long)">encodeLongLE</a></strong>(byte[]&nbsp;b,
             int&nbsp;offset,
@@ -294,7 +302,7 @@ extends <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Object.html?
 <div class="block">Encodes a 64-bit integer, in little-endian format.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code>static void</code></td>
 <td class="colLast"><code><strong><a href="../../../../org/cojen/tupl/io/Utils.html#encodeShortBE(byte[],%20int,%20int)">encodeShortBE</a></strong>(byte[]&nbsp;b,
              int&nbsp;offset,
@@ -302,7 +310,7 @@ extends <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Object.html?
 <div class="block">Encodes a 16-bit integer, in big-endian format.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code>static void</code></td>
 <td class="colLast"><code><strong><a href="../../../../org/cojen/tupl/io/Utils.html#encodeShortLE(byte[],%20int,%20int)">encodeShortLE</a></strong>(byte[]&nbsp;b,
              int&nbsp;offset,
@@ -310,14 +318,32 @@ extends <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Object.html?
 <div class="block">Encodes a 16-bit integer, in little-endian format.</div>
 </td>
 </tr>
+<tr class="altColor">
+<td class="colFirst"><code>static boolean</code></td>
+<td class="colLast"><code><strong><a href="../../../../org/cojen/tupl/io/Utils.html#increment(byte[],%20int,%20int)">increment</a></strong>(byte[]&nbsp;value,
+         int&nbsp;start,
+         int&nbsp;end)</code>
+<div class="block">Adds one to an unsigned integer, represented as a byte array.</div>
+</td>
+</tr>
 <tr class="rowColor">
+<td class="colFirst"><code>static void</code></td>
+<td class="colLast"><code><strong><a href="../../../../org/cojen/tupl/io/Utils.html#readFully(java.io.InputStream,%20byte[],%20int,%20int)">readFully</a></strong>(<a href="http://docs.oracle.com/javase/7/docs/api/java/io/InputStream.html?is-external=true" title="class or interface in java.io">InputStream</a>&nbsp;in,
+         byte[]&nbsp;b,
+         int&nbsp;off,
+         int&nbsp;len)</code>
+<div class="block">Fully reads the required length of bytes, throwing an EOFException if the end of stream
+ is reached too soon.</div>
+</td>
+</tr>
+<tr class="altColor">
 <td class="colFirst"><code>static <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/RuntimeException.html?is-external=true" title="class or interface in java.lang">RuntimeException</a></code></td>
 <td class="colLast"><code><strong><a href="../../../../org/cojen/tupl/io/Utils.html#rethrow(java.lang.Throwable)">rethrow</a></strong>(<a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Throwable.html?is-external=true" title="class or interface in java.lang">Throwable</a>&nbsp;e)</code>
 <div class="block">Rethrows the given exception without the compiler complaining about it being checked or
  not.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code>static <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/RuntimeException.html?is-external=true" title="class or interface in java.lang">RuntimeException</a></code></td>
 <td class="colLast"><code><strong><a href="../../../../org/cojen/tupl/io/Utils.html#rethrow(java.lang.Throwable,%20java.lang.Throwable)">rethrow</a></strong>(<a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Throwable.html?is-external=true" title="class or interface in java.lang">Throwable</a>&nbsp;e,
        <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Throwable.html?is-external=true" title="class or interface in java.lang">Throwable</a>&nbsp;cause)</code>
@@ -325,13 +351,13 @@ extends <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Object.html?
  not.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code>static <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Throwable.html?is-external=true" title="class or interface in java.lang">Throwable</a></code></td>
 <td class="colLast"><code><strong><a href="../../../../org/cojen/tupl/io/Utils.html#rootCause(java.lang.Throwable)">rootCause</a></strong>(<a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Throwable.html?is-external=true" title="class or interface in java.lang">Throwable</a>&nbsp;e)</code>
 <div class="block">Returns the root cause of the given exception.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code>static void</code></td>
 <td class="colLast"><code><strong><a href="../../../../org/cojen/tupl/io/Utils.html#uncaught(java.lang.Throwable)">uncaught</a></strong>(<a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Throwable.html?is-external=true" title="class or interface in java.lang">Throwable</a>&nbsp;e)</code>
 <div class="block">Convenience method to pass the given exception to the current thread's uncaught
@@ -404,6 +430,36 @@ extends <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Object.html?
 <div class="block">Performs a lexicographical comparison between two unsigned byte arrays.</div>
 <dl><dt><span class="strong">Parameters:</span></dt><dd><code>a</code> - array 'a'</dd><dd><code>aoff</code> - array 'a' offset</dd><dd><code>alen</code> - array 'a' length</dd><dd><code>b</code> - array 'b'</dd><dd><code>boff</code> - array 'b' offset</dd><dd><code>blen</code> - array 'b' length</dd>
 <dt><span class="strong">Returns:</span></dt><dd>negative if 'a' is less, zero if equal, greater than zero if greater</dd></dl>
+</li>
+</ul>
+<a name="increment(byte[], int, int)">
+<!--   -->
+</a>
+<ul class="blockList">
+<li class="blockList">
+<h4>increment</h4>
+<pre>public static&nbsp;boolean&nbsp;increment(byte[]&nbsp;value,
+                int&nbsp;start,
+                int&nbsp;end)</pre>
+<div class="block">Adds one to an unsigned integer, represented as a byte array. If
+ overflowed, value in byte array is 0x00, 0x00, 0x00...</div>
+<dl><dt><span class="strong">Parameters:</span></dt><dd><code>value</code> - unsigned integer to increment</dd><dd><code>start</code> - inclusive index</dd><dd><code>end</code> - exclusive index</dd>
+<dt><span class="strong">Returns:</span></dt><dd>false if overflowed</dd></dl>
+</li>
+</ul>
+<a name="decrement(byte[], int, int)">
+<!--   -->
+</a>
+<ul class="blockList">
+<li class="blockList">
+<h4>decrement</h4>
+<pre>public static&nbsp;boolean&nbsp;decrement(byte[]&nbsp;value,
+                int&nbsp;start,
+                int&nbsp;end)</pre>
+<div class="block">Subtracts one from an unsigned integer, represented as a byte array. If
+ overflowed, value in byte array is 0xff, 0xff, 0xff...</div>
+<dl><dt><span class="strong">Parameters:</span></dt><dd><code>value</code> - unsigned integer to decrement</dd><dd><code>start</code> - inclusive index</dd><dd><code>end</code> - exclusive index</dd>
+<dt><span class="strong">Returns:</span></dt><dd>false if overflowed</dd></dl>
 </li>
 </ul>
 <a name="encodeShortBE(byte[], int, int)">
@@ -612,6 +668,23 @@ extends <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Object.html?
 <div class="block">Decodes a 64-bit integer, in little-endian format.</div>
 <dl><dt><span class="strong">Parameters:</span></dt><dd><code>b</code> - decode source</dd><dd><code>offset</code> - offset into byte array</dd>
 <dt><span class="strong">Returns:</span></dt><dd>decoded value</dd></dl>
+</li>
+</ul>
+<a name="readFully(java.io.InputStream, byte[], int, int)">
+<!--   -->
+</a>
+<ul class="blockList">
+<li class="blockList">
+<h4>readFully</h4>
+<pre>public static&nbsp;void&nbsp;readFully(<a href="http://docs.oracle.com/javase/7/docs/api/java/io/InputStream.html?is-external=true" title="class or interface in java.io">InputStream</a>&nbsp;in,
+             byte[]&nbsp;b,
+             int&nbsp;off,
+             int&nbsp;len)
+                      throws <a href="http://docs.oracle.com/javase/7/docs/api/java/io/IOException.html?is-external=true" title="class or interface in java.io">IOException</a></pre>
+<div class="block">Fully reads the required length of bytes, throwing an EOFException if the end of stream
+ is reached too soon.</div>
+<dl><dt><span class="strong">Throws:</span></dt>
+<dd><code><a href="http://docs.oracle.com/javase/7/docs/api/java/io/IOException.html?is-external=true" title="class or interface in java.io">IOException</a></code></dd></dl>
 </li>
 </ul>
 <a name="delete(java.nio.Buffer)">
