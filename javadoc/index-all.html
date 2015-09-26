@@ -169,6 +169,20 @@
 <div class="block">Enable automatic cache priming, which writes a priming set into a special file when the
  database is cleanly shutdown.</div>
 </dd>
+<dt><span class="strong"><a href="./org/cojen/tupl/Database.html#capacityLimit(long)">capacityLimit(long)</a></span> - Method in class org.cojen.tupl.<a href="./org/cojen/tupl/Database.html" title="class in org.cojen.tupl">Database</a></dt>
+<dd>
+<div class="block">Set a soft capacity limit for the database, to prevent filling up the storage
+ device.</div>
+</dd>
+<dt><span class="strong"><a href="./org/cojen/tupl/Database.html#capacityLimit()">capacityLimit()</a></span> - Method in class org.cojen.tupl.<a href="./org/cojen/tupl/Database.html" title="class in org.cojen.tupl">Database</a></dt>
+<dd>
+<div class="block">Returns the current capacity limit, rounded down by page size.</div>
+</dd>
+<dt><span class="strong"><a href="./org/cojen/tupl/Database.html#capacityLimitOverride(long)">capacityLimitOverride(long)</a></span> - Method in class org.cojen.tupl.<a href="./org/cojen/tupl/Database.html" title="class in org.cojen.tupl">Database</a></dt>
+<dd>
+<div class="block">Set capacity limits for the current thread, allowing it to perform tasks which can free
+ up space.</div>
+</dd>
 <dt><span class="strong"><a href="./org/cojen/tupl/EventType.html#category">category</a></span> - Variable in enum org.cojen.tupl.<a href="./org/cojen/tupl/EventType.html" title="enum in org.cojen.tupl">EventType</a></dt>
 <dd>&nbsp;</dd>
 <dt><a href="./org/cojen/tupl/io/CauseCloseable.html" title="interface in org.cojen.tupl.io"><span class="strong">CauseCloseable</span></a> - Interface in <a href="./org/cojen/tupl/io/package-summary.html">org.cojen.tupl.io</a></dt>
@@ -483,6 +497,8 @@
 <dt><span class="strong"><a href="./org/cojen/tupl/DatabaseFullException.html#DatabaseFullException()">DatabaseFullException()</a></span> - Constructor for exception org.cojen.tupl.<a href="./org/cojen/tupl/DatabaseFullException.html" title="class in org.cojen.tupl">DatabaseFullException</a></dt>
 <dd>&nbsp;</dd>
 <dt><span class="strong"><a href="./org/cojen/tupl/DatabaseFullException.html#DatabaseFullException(java.lang.Throwable)">DatabaseFullException(Throwable)</a></span> - Constructor for exception org.cojen.tupl.<a href="./org/cojen/tupl/DatabaseFullException.html" title="class in org.cojen.tupl">DatabaseFullException</a></dt>
+<dd>&nbsp;</dd>
+<dt><span class="strong"><a href="./org/cojen/tupl/DatabaseFullException.html#DatabaseFullException(java.lang.String)">DatabaseFullException(String)</a></span> - Constructor for exception org.cojen.tupl.<a href="./org/cojen/tupl/DatabaseFullException.html" title="class in org.cojen.tupl">DatabaseFullException</a></dt>
 <dd>&nbsp;</dd>
 <dt><span class="strong"><a href="./org/cojen/tupl/DatabaseConfig.html#dataFile(java.io.File)">dataFile(File)</a></span> - Method in class org.cojen.tupl.<a href="./org/cojen/tupl/DatabaseConfig.html" title="class in org.cojen.tupl">DatabaseConfig</a></dt>
 <dd>
