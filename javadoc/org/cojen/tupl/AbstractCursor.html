@@ -176,13 +176,19 @@ implements <a href="../../../org/cojen/tupl/Cursor.html" title="interface in org
 </td>
 </tr>
 <tr class="rowColor">
+<td class="colFirst"><code>protected <a href="../../../org/cojen/tupl/LockResult.html" title="enum in org.cojen.tupl">LockResult</a></code></td>
+<td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractCursor.html#doSkip(long)">doSkip</a></strong>(long&nbsp;amount)</code>
+<div class="block">Simple skip implementation which doesn't support skip by zero.</div>
+</td>
+</tr>
+<tr class="altColor">
 <td class="colFirst"><code>org.cojen.tupl.Stream</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractCursor.html#newStream()">newStream</a></strong>()</code>
 <div class="block">Returns an opened stream at the cursor's current position, or an unopened stream if the
  cursor is unpositioned.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/LockResult.html" title="enum in org.cojen.tupl">LockResult</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractCursor.html#skip(long,%20byte[],%20boolean)">skip</a></strong>(long&nbsp;amount,
     byte[]&nbsp;limitKey,
@@ -324,7 +330,7 @@ implements <a href="../../../org/cojen/tupl/Cursor.html" title="interface in org
 <a name="newStream()">
 <!--   -->
 </a>
-<ul class="blockListLast">
+<ul class="blockList">
 <li class="blockList">
 <h4>newStream</h4>
 <pre>public&nbsp;org.cojen.tupl.Stream&nbsp;newStream()</pre>
@@ -334,6 +340,20 @@ implements <a href="../../../org/cojen/tupl/Cursor.html" title="interface in org
 <dt><strong>Specified by:</strong></dt>
 <dd><code><a href="../../../org/cojen/tupl/Cursor.html#newStream()">newStream</a></code>&nbsp;in interface&nbsp;<code><a href="../../../org/cojen/tupl/Cursor.html" title="interface in org.cojen.tupl">Cursor</a></code></dd>
 </dl>
+</li>
+</ul>
+<a name="doSkip(long)">
+<!--   -->
+</a>
+<ul class="blockListLast">
+<li class="blockList">
+<h4>doSkip</h4>
+<pre>protected&nbsp;<a href="../../../org/cojen/tupl/LockResult.html" title="enum in org.cojen.tupl">LockResult</a>&nbsp;doSkip(long&nbsp;amount)
+                     throws <a href="http://docs.oracle.com/javase/7/docs/api/java/io/IOException.html?is-external=true" title="class or interface in java.io">IOException</a></pre>
+<div class="block">Simple skip implementation which doesn't support skip by zero.</div>
+<dl><dt><span class="strong">Throws:</span></dt>
+<dd><code><a href="http://docs.oracle.com/javase/7/docs/api/java/lang/IllegalArgumentException.html?is-external=true" title="class or interface in java.lang">IllegalArgumentException</a></code> - when skip amount is zero</dd>
+<dd><code><a href="http://docs.oracle.com/javase/7/docs/api/java/io/IOException.html?is-external=true" title="class or interface in java.io">IOException</a></code></dd></dl>
 </li>
 </ul>
 </li>
