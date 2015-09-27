@@ -141,6 +141,13 @@ implements <a href="../../../org/cojen/tupl/View.html" title="interface in org.c
 <th class="colLast" scope="col">Method and Description</th>
 </tr>
 <tr class="altColor">
+<td class="colFirst"><code>long</code></td>
+<td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractView.html#count(byte[],%20byte[])">count</a></strong>(byte[]&nbsp;lowKey,
+     byte[]&nbsp;highKey)</code>
+<div class="block">Non-transactionally counts the number of entries within the given range.</div>
+</td>
+</tr>
+<tr class="rowColor">
 <td class="colFirst"><code>boolean</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractView.html#delete(org.cojen.tupl.Transaction,%20byte[])">delete</a></strong>(<a href="../../../org/cojen/tupl/Transaction.html" title="class in org.cojen.tupl">Transaction</a>&nbsp;txn,
       byte[]&nbsp;key)</code>
@@ -148,7 +155,7 @@ implements <a href="../../../org/cojen/tupl/View.html" title="interface in org.c
  key.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code>boolean</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractView.html#insert(org.cojen.tupl.Transaction,%20byte[],%20byte[])">insert</a></strong>(<a href="../../../org/cojen/tupl/Transaction.html" title="class in org.cojen.tupl">Transaction</a>&nbsp;txn,
       byte[]&nbsp;key,
@@ -157,13 +164,13 @@ implements <a href="../../../org/cojen/tupl/View.html" title="interface in org.c
  already exists.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code>org.cojen.tupl.Stream</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractView.html#newStream()">newStream</a></strong>()</code>
 <div class="block">Returns an unopened stream for accessing values in this view.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code>boolean</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractView.html#remove(org.cojen.tupl.Transaction,%20byte[],%20byte[])">remove</a></strong>(<a href="../../../org/cojen/tupl/Transaction.html" title="class in org.cojen.tupl">Transaction</a>&nbsp;txn,
       byte[]&nbsp;key,
@@ -172,55 +179,55 @@ implements <a href="../../../org/cojen/tupl/View.html" title="interface in org.c
  value matches.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/View.html" title="interface in org.cojen.tupl">View</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractView.html#viewGe(byte[])">viewGe</a></strong>(byte[]&nbsp;key)</code>
 <div class="block">Returns a sub-view, backed by this one, whose keys are greater than or
  equal to the given key.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/View.html" title="interface in org.cojen.tupl">View</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractView.html#viewGt(byte[])">viewGt</a></strong>(byte[]&nbsp;key)</code>
 <div class="block">Returns a sub-view, backed by this one, whose keys are greater than the
  given key.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/View.html" title="interface in org.cojen.tupl">View</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractView.html#viewLe(byte[])">viewLe</a></strong>(byte[]&nbsp;key)</code>
 <div class="block">Returns a sub-view, backed by this one, whose keys are less than or
  equal to the given key.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/View.html" title="interface in org.cojen.tupl">View</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractView.html#viewLt(byte[])">viewLt</a></strong>(byte[]&nbsp;key)</code>
 <div class="block">Returns a sub-view, backed by this one, whose keys are less than the
  given key.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/View.html" title="interface in org.cojen.tupl">View</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractView.html#viewPrefix(byte[],%20int)">viewPrefix</a></strong>(byte[]&nbsp;prefix,
           int&nbsp;trim)</code>
 <div class="block">Returns a sub-view, backed by this one, whose keys start with the given prefix.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/View.html" title="interface in org.cojen.tupl">View</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractView.html#viewReverse()">viewReverse</a></strong>()</code>
 <div class="block">Returns a view, backed by this one, whose natural order is reversed.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/View.html" title="interface in org.cojen.tupl">View</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractView.html#viewTransformed(org.cojen.tupl.Transformer)">viewTransformed</a></strong>(<a href="../../../org/cojen/tupl/Transformer.html" title="class in org.cojen.tupl">Transformer</a>&nbsp;transformer)</code>
 <div class="block">Returns a sub-view, backed by this one, whose entries have been filtered out and
  transformed.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/View.html" title="interface in org.cojen.tupl">View</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/AbstractView.html#viewUnmodifiable()">viewUnmodifiable</a></strong>()</code>
 <div class="block">Returns a view, backed by this one, whose entries cannot be modified.</div>
@@ -272,6 +279,26 @@ implements <a href="../../../org/cojen/tupl/View.html" title="interface in org.c
 <!--   -->
 </a>
 <h3>Method Detail</h3>
+<a name="count(byte[], byte[])">
+<!--   -->
+</a>
+<ul class="blockList">
+<li class="blockList">
+<h4>count</h4>
+<pre>public&nbsp;long&nbsp;count(byte[]&nbsp;lowKey,
+         byte[]&nbsp;highKey)
+           throws <a href="http://docs.oracle.com/javase/7/docs/api/java/io/IOException.html?is-external=true" title="class or interface in java.io">IOException</a></pre>
+<div class="block">Non-transactionally counts the number of entries within the given range. Implementations
+ of this method typically scan over the entries, and so it shouldn't be expected to run
+ in constant time.</div>
+<dl>
+<dt><strong>Specified by:</strong></dt>
+<dd><code><a href="../../../org/cojen/tupl/View.html#count(byte[],%20byte[])">count</a></code>&nbsp;in interface&nbsp;<code><a href="../../../org/cojen/tupl/View.html" title="interface in org.cojen.tupl">View</a></code></dd>
+<dt><span class="strong">Parameters:</span></dt><dd><code>lowKey</code> - inclusive lowest key in the counted range; pass null for open range</dd><dd><code>highKey</code> - exclusive highest key in the counted range; pass null for open range</dd>
+<dt><span class="strong">Throws:</span></dt>
+<dd><code><a href="http://docs.oracle.com/javase/7/docs/api/java/io/IOException.html?is-external=true" title="class or interface in java.io">IOException</a></code></dd></dl>
+</li>
+</ul>
 <a name="insert(org.cojen.tupl.Transaction, byte[], byte[])">
 <!--   -->
 </a>
