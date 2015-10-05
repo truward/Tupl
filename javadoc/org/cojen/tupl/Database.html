@@ -194,170 +194,150 @@ implements <a href="../../../org/cojen/tupl/io/CauseCloseable.html" title="inter
 </td>
 </tr>
 <tr class="altColor">
-<td class="colFirst"><code>long</code></td>
-<td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#capacityLimit()">capacityLimit</a></strong>()</code>
-<div class="block">Returns the current capacity limit, rounded down by page size.</div>
-</td>
-</tr>
-<tr class="rowColor">
-<td class="colFirst"><code>void</code></td>
-<td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#capacityLimit(long)">capacityLimit</a></strong>(long&nbsp;bytes)</code>
-<div class="block">Set a soft capacity limit for the database, to prevent filling up the storage
- device.</div>
-</td>
-</tr>
-<tr class="altColor">
-<td class="colFirst"><code>void</code></td>
-<td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#capacityLimitOverride(long)">capacityLimitOverride</a></strong>(long&nbsp;bytes)</code>
-<div class="block">Set capacity limits for the current thread, allowing it to perform tasks which can free
- up space.</div>
-</td>
-</tr>
-<tr class="rowColor">
 <td class="colFirst"><code>void</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#checkpoint()">checkpoint</a></strong>()</code>
 <div class="block">Durably sync and checkpoint all changes to the database.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code>void</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#close()">close</a></strong>()</code>
 <div class="block">Closes the database, ensuring durability of committed transactions.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code>void</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#close(java.lang.Throwable)">close</a></strong>(<a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Throwable.html?is-external=true" title="class or interface in java.lang">Throwable</a>&nbsp;cause)</code>
 <div class="block">Closes the database after an unexpected failure.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code>boolean</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#compactFile(org.cojen.tupl.CompactionObserver,%20double)">compactFile</a></strong>(<a href="../../../org/cojen/tupl/CompactionObserver.html" title="class in org.cojen.tupl">CompactionObserver</a>&nbsp;observer,
            double&nbsp;target)</code>
 <div class="block">Compacts the database by shrinking the database file.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code>void</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#createCachePrimer(java.io.OutputStream)">createCachePrimer</a></strong>(<a href="http://docs.oracle.com/javase/7/docs/api/java/io/OutputStream.html?is-external=true" title="class or interface in java.io">OutputStream</a>&nbsp;out)</code>
 <div class="block">Writes a cache priming set into the given stream, which can then be used later to <a href="../../../org/cojen/tupl/Database.html#applyCachePrimer(java.io.InputStream)"><code>prime</code></a> the cache.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code><a href="http://docs.oracle.com/javase/7/docs/api/java/lang/Runnable.html?is-external=true" title="class or interface in java.lang">Runnable</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#deleteIndex(org.cojen.tupl.Index)">deleteIndex</a></strong>(<a href="../../../org/cojen/tupl/Index.html" title="interface in org.cojen.tupl">Index</a>&nbsp;index)</code>
 <div class="block">Fully closes and deletes the given index, but does not immediately reclaim the pages it
  occupied.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code>static <a href="../../../org/cojen/tupl/Database.html" title="class in org.cojen.tupl">Database</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#destroy(org.cojen.tupl.DatabaseConfig)">destroy</a></strong>(<a href="../../../org/cojen/tupl/DatabaseConfig.html" title="class in org.cojen.tupl">DatabaseConfig</a>&nbsp;config)</code>
 <div class="block">Delete the contents of an existing database, and replace it with an
  empty one.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code>protected void</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#finalize()">finalize</a></strong>()</code>&nbsp;</td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/Index.html" title="interface in org.cojen.tupl">Index</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#findIndex(byte[])">findIndex</a></strong>(byte[]&nbsp;name)</code>
 <div class="block">Returns the given named index, returning null if not found.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/Index.html" title="interface in org.cojen.tupl">Index</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#findIndex(java.lang.String)">findIndex</a></strong>(<a href="http://docs.oracle.com/javase/7/docs/api/java/lang/String.html?is-external=true" title="class or interface in java.lang">String</a>&nbsp;name)</code>
 <div class="block">Returns the given named index, returning null if not found.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code>void</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#flush()">flush</a></strong>()</code>
 <div class="block">Flushes, but does not sync, all non-flushed transactions.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/Index.html" title="interface in org.cojen.tupl">Index</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#indexById(byte[])">indexById</a></strong>(byte[]&nbsp;id)</code>
 <div class="block">Returns an index by its identifier, returning null if not found.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/Index.html" title="interface in org.cojen.tupl">Index</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#indexById(long)">indexById</a></strong>(long&nbsp;id)</code>
 <div class="block">Returns an index by its identifier, returning null if not found.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/View.html" title="interface in org.cojen.tupl">View</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#indexRegistryById()">indexRegistryById</a></strong>()</code>
 <div class="block">Returns an <a href="../../../org/cojen/tupl/UnmodifiableViewException.html" title="class in org.cojen.tupl"><code>unmodifiable</code></a> View which maps all available
  index identifiers to names.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/View.html" title="interface in org.cojen.tupl">View</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#indexRegistryByName()">indexRegistryByName</a></strong>()</code>
 <div class="block">Returns an <a href="../../../org/cojen/tupl/UnmodifiableViewException.html" title="class in org.cojen.tupl"><code>unmodifiable</code></a> View which maps all available
  index names to identifiers.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/Transaction.html" title="class in org.cojen.tupl">Transaction</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#newTransaction()">newTransaction</a></strong>()</code>
 <div class="block">Returns a new Transaction with the <a href="../../../org/cojen/tupl/DatabaseConfig.html#durabilityMode(org.cojen.tupl.DurabilityMode)"><code>default</code></a>
  durability mode.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/Transaction.html" title="class in org.cojen.tupl">Transaction</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#newTransaction(org.cojen.tupl.DurabilityMode)">newTransaction</a></strong>(<a href="../../../org/cojen/tupl/DurabilityMode.html" title="enum in org.cojen.tupl">DurabilityMode</a>&nbsp;durabilityMode)</code>
 <div class="block">Returns a new Transaction with the given durability mode.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code>static <a href="../../../org/cojen/tupl/Database.html" title="class in org.cojen.tupl">Database</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#open(org.cojen.tupl.DatabaseConfig)">open</a></strong>(<a href="../../../org/cojen/tupl/DatabaseConfig.html" title="class in org.cojen.tupl">DatabaseConfig</a>&nbsp;config)</code>
 <div class="block">Open a database, creating it if necessary.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/Index.html" title="interface in org.cojen.tupl">Index</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#openIndex(byte[])">openIndex</a></strong>(byte[]&nbsp;name)</code>
 <div class="block">Returns the given named index, creating it if necessary.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/Index.html" title="interface in org.cojen.tupl">Index</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#openIndex(java.lang.String)">openIndex</a></strong>(<a href="http://docs.oracle.com/javase/7/docs/api/java/lang/String.html?is-external=true" title="class or interface in java.lang">String</a>&nbsp;name)</code>
 <div class="block">Returns the given named index, creating it if necessary.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code>long</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#preallocate(long)">preallocate</a></strong>(long&nbsp;bytes)</code>
 <div class="block">Preallocates pages for immediate use.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code>void</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#renameIndex(org.cojen.tupl.Index,%20byte[])">renameIndex</a></strong>(<a href="../../../org/cojen/tupl/Index.html" title="interface in org.cojen.tupl">Index</a>&nbsp;index,
            byte[]&nbsp;newName)</code>
 <div class="block">Renames the given index to the one given.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code>void</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#renameIndex(org.cojen.tupl.Index,%20java.lang.String)">renameIndex</a></strong>(<a href="../../../org/cojen/tupl/Index.html" title="interface in org.cojen.tupl">Index</a>&nbsp;index,
            <a href="http://docs.oracle.com/javase/7/docs/api/java/lang/String.html?is-external=true" title="class or interface in java.lang">String</a>&nbsp;newName)</code>
 <div class="block">Renames the given index to the one given.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code>static <a href="../../../org/cojen/tupl/Database.html" title="class in org.cojen.tupl">Database</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#restoreFromSnapshot(org.cojen.tupl.DatabaseConfig,%20java.io.InputStream)">restoreFromSnapshot</a></strong>(<a href="../../../org/cojen/tupl/DatabaseConfig.html" title="class in org.cojen.tupl">DatabaseConfig</a>&nbsp;config,
                    <a href="http://docs.oracle.com/javase/7/docs/api/java/io/InputStream.html?is-external=true" title="class or interface in java.io">InputStream</a>&nbsp;in)</code>
@@ -365,38 +345,38 @@ implements <a href="../../../org/cojen/tupl/io/CauseCloseable.html" title="inter
  configuration.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code>void</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#resumeCheckpoints()">resumeCheckpoints</a></strong>()</code>
 <div class="block">Resume automatic checkpoints after having been temporarily <a href="../../../org/cojen/tupl/Database.html#suspendCheckpoints()"><code>suspended</code></a>.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code>void</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#shutdown()">shutdown</a></strong>()</code>
 <div class="block">Cleanly closes the database, ensuring durability of all modifications.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code><a href="../../../org/cojen/tupl/Database.Stats.html" title="class in org.cojen.tupl">Database.Stats</a></code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#stats()">stats</a></strong>()</code>
 <div class="block">Returns an immutable copy of database statistics.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code>void</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#suspendCheckpoints()">suspendCheckpoints</a></strong>()</code>
 <div class="block">Temporarily suspend automatic checkpoints without waiting for any in-progress checkpoint
  to complete.</div>
 </td>
 </tr>
-<tr class="rowColor">
+<tr class="altColor">
 <td class="colFirst"><code>void</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#sync()">sync</a></strong>()</code>
 <div class="block">Persists all non-flushed and non-sync'd transactions.</div>
 </td>
 </tr>
-<tr class="altColor">
+<tr class="rowColor">
 <td class="colFirst"><code>boolean</code></td>
 <td class="colLast"><code><strong><a href="../../../org/cojen/tupl/Database.html#verify(org.cojen.tupl.VerificationObserver)">verify</a></strong>(<a href="../../../org/cojen/tupl/VerificationObserver.html" title="class in org.cojen.tupl">VerificationObserver</a>&nbsp;observer)</code>
 <div class="block">Verifies the integrity of the database and all indexes.</div>
@@ -665,43 +645,6 @@ implements <a href="../../../org/cojen/tupl/io/CauseCloseable.html" title="inter
 <dl><dt><span class="strong">Returns:</span></dt><dd>actual amount allocated</dd>
 <dt><span class="strong">Throws:</span></dt>
 <dd><code><a href="http://docs.oracle.com/javase/7/docs/api/java/io/IOException.html?is-external=true" title="class or interface in java.io">IOException</a></code></dd></dl>
-</li>
-</ul>
-<a name="capacityLimit(long)">
-<!--   -->
-</a>
-<ul class="blockList">
-<li class="blockList">
-<h4>capacityLimit</h4>
-<pre>public&nbsp;void&nbsp;capacityLimit(long&nbsp;bytes)</pre>
-<div class="block">Set a soft capacity limit for the database, to prevent filling up the storage
- device. When the limit is reached, writes might fail with a <a href="../../../org/cojen/tupl/DatabaseFullException.html" title="class in org.cojen.tupl"><code>DatabaseFullException</code></a>. No explicit limit is defined by default, and the option is
- ignored by non-durable databases. The limit is checked only when the database attempts
- to grow, and so it can be set smaller than the current database size.</div>
-<dl><dt><span class="strong">Parameters:</span></dt><dd><code>bytes</code> - maximum capacity, in bytes; pass -1 for no limit</dd></dl>
-</li>
-</ul>
-<a name="capacityLimit()">
-<!--   -->
-</a>
-<ul class="blockList">
-<li class="blockList">
-<h4>capacityLimit</h4>
-<pre>public&nbsp;long&nbsp;capacityLimit()</pre>
-<div class="block">Returns the current capacity limit, rounded down by page size.</div>
-<dl><dt><span class="strong">Returns:</span></dt><dd>maximum capacity, in bytes; is -1 if no limit</dd></dl>
-</li>
-</ul>
-<a name="capacityLimitOverride(long)">
-<!--   -->
-</a>
-<ul class="blockList">
-<li class="blockList">
-<h4>capacityLimitOverride</h4>
-<pre>public&nbsp;void&nbsp;capacityLimitOverride(long&nbsp;bytes)</pre>
-<div class="block">Set capacity limits for the current thread, allowing it to perform tasks which can free
- up space. While doing so, it might require additional temporary storage.</div>
-<dl><dt><span class="strong">Parameters:</span></dt><dd><code>bytes</code> - maximum capacity, in bytes; pass -1 for no limit; pass 0 to remove override</dd></dl>
 </li>
 </ul>
 <a name="beginSnapshot()">
