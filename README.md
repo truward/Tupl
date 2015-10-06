@@ -1,6 +1,29 @@
 Tupl
 ====
 
+# Why this fork exists?
+
+This is a fork of the original Tupl project.
+
+
+The only reason why this fork exists is to publish it to the maven nexus repository - to make it easier to
+play with Tupl for those who use maven-compatible build systems (such as buildr, ivy, grape, gradle, sbt, leiningen or *maven* itself).
+
+All credits - as well as bug reports :) - should go to [Brian](http://github.com/broneill).
+Master repository is [cojen/Tupl](https://github.com/cojen/Tupl).
+
+Sample usage in maven:
+
+```xml
+<dependency>
+  <groupId>com.truward.tupl</groupId>
+  <artifactId>tupl</artifactId>
+  <version>1.2.8</version>
+</dependency>
+```
+
+# Overview
+
 The Unnamed Persistence Library
 
 Tupl is a high-performance, concurrent, transactional, scalable, low-level embedded database. Features include record-level locking, upgradable locks, deadlock detection, cursors, hot backups, striped files, encryption, pluggable replication, nested transaction scopes, and direct lock control. Although written in Java, Tupl doesn't suffer from garbage collection pauses when configured with a large cache.

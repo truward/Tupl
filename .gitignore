@@ -1,2 +1,8 @@
 /maven.bat
 /target
+
+# Intellij
+*.iml
+*.ipr
+*.iws
+*.idea
