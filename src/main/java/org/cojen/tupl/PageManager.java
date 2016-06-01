@@ -1,5 +1,5 @@
 /*
- *  Copyright 2011-2013 Brian S O'Neill
+ *  Copyright 2011-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -20,9 +20,8 @@ import java.io.IOException;
 
 import java.util.BitSet;
 
-import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock.ReadLock;
 
 import org.cojen.tupl.io.PageArray;
 
@@ -212,7 +211,7 @@ final class PageManager {
                     break alloc;
                 }
 
-                final Lock lock = mRemoveLock;
+                final ReentrantLock lock = mRemoveLock;
                 lock.lock();
                 pageId = mRecycleFreeList.tryRemove(lock);
                 if (pageId != 0) {
@@ -309,7 +308,7 @@ final class PageManager {
      *
      * @return newly allocated page id
      */
-    private long increasePageCount() throws DatabaseFullException {
+    private long increasePageCount() throws IOException, DatabaseFullException {
         long total = mTotalPageCount;
 
         long limit;
@@ -320,6 +319,11 @@ final class PageManager {
                 limit = mPageLimit;
             } else {
                 limit = limitObj;
+            }
+
+            long max = mPageArray.getPageCountLimit();
+            if (max > 0 && (limit < 0 || limit > max)) {
+                limit = max;
             }
         }
 
@@ -432,15 +436,15 @@ final class PageManager {
     /**
      * @return false if aborted
      */
-    public boolean compactionScanFreeList(ReentrantReadWriteLock commitLock) throws IOException {
+    public boolean compactionScanFreeList(CommitLock commitLock) throws IOException {
         return compactionScanFreeList(commitLock, mRecycleFreeList)
             && compactionScanFreeList(commitLock, mRegularFreeList);
     }
 
-    private boolean compactionScanFreeList(ReentrantReadWriteLock commitLock, PageQueue list)
+    private boolean compactionScanFreeList(CommitLock commitLock, PageQueue list)
         throws IOException
     {
-        Lock sharedCommitLock = commitLock.readLock();
+        ReadLock sharedCommitLock = commitLock.readLock();
 
         long target;
         mRemoveLock.lock();
@@ -493,7 +497,7 @@ final class PageManager {
     /**
      * @return false if aborted
      */
-    public boolean compactionEnd(ReentrantReadWriteLock commitLock) throws IOException {
+    public boolean compactionEnd(CommitLock commitLock) throws IOException {
         // Default will reclaim everything.
         long upperBound = Long.MAX_VALUE;
 
@@ -502,7 +506,7 @@ final class PageManager {
         // Need exclusive commit lock to prevent delete and recycle from attempting to operate
         // against a null reserve list. A race condition exists otherwise. Acquire full lock
         // too out of paranoia.
-        commitLock.writeLock().lock();
+        commitLock.acquireExclusive();
         fullLock();
 
         if (ready && (ready = mCompacting && (mTotalPageCount > mCompactionTargetPageCount
@@ -524,7 +528,7 @@ final class PageManager {
         mReserveList = null;
 
         fullUnlock();
-        commitLock.writeLock().unlock();
+        commitLock.releaseExclusive();
 
         if (reserve != null) {
             try {

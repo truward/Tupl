@@ -1,5 +1,5 @@
 /*
- *  Copyright 2015 Brian S O'Neill
+ *  Copyright 2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ package org.cojen.tupl;
  *
  * @author Brian S O'Neill
  */
+/*P*/
 interface DatabaseAccess {
-    Database getDatabase();
+    LocalDatabase getDatabase();
 }

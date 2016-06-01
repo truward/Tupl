@@ -1,5 +1,5 @@
 /*
- *  Copyright 2012-2013 Brian S O'Neill
+ *  Copyright 2012-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,8 @@ import java.util.concurrent.ConcurrentMap;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.cojen.tupl.util.Latch;
+
 import org.cojen.tupl.ext.ReplicationManager;
 
 import static org.cojen.tupl.Utils.*;
@@ -36,11 +38,12 @@ import org.cojen.tupl.ext.TransactionHandler;
  *
  * @author Brian S O'Neill
  */
+/*P*/
 final class ReplRedoEngine implements RedoVisitor {
     private final static long INFINITE_TIMEOUT = -1L;
 
     final ReplicationManager mManager;
-    final Database mDatabase;
+    final LocalDatabase mDatabase;
 
     final ReplRedoController mController;
 
@@ -79,7 +82,7 @@ final class ReplRedoEngine implements RedoVisitor {
      * @param txns recovered transactions; can be null; cleared as a side-effect
      */
     ReplRedoEngine(ReplicationManager manager, int maxThreads,
-                   Database db, LHashTable.Obj<Transaction> txns)
+                   LocalDatabase db, LHashTable.Obj<LocalTransaction> txns)
         throws IOException
     {
         if (maxThreads <= 0) {
@@ -122,20 +125,16 @@ final class ReplRedoEngine implements RedoVisitor {
         } else {
             txnTable = new TxnTable(txns.size());
 
-            txns.traverse(new LHashTable.Visitor
-                          <LHashTable.ObjEntry<Transaction>, IOException>()
-            {
-                public boolean visit(LHashTable.ObjEntry<Transaction> entry) throws IOException {
-                    // Reduce hash collisions.
-                    long scrambledTxnId = scramble(entry.key);
-                    Latch latch = selectLatch(scrambledTxnId);
-                    Transaction txn = entry.value;
-                    if (!txn.recoveryCleanup(false)) {
-                        txnTable.insert(scrambledTxnId).init(txn, latch);
-                    }
-                    // Delete entry.
-                    return true;
+            txns.traverse((entry) -> {
+                // Reduce hash collisions.
+                long scrambledTxnId = scramble(entry.key);
+                Latch latch = selectLatch(scrambledTxnId);
+                LocalTransaction txn = entry.value;
+                if (!txn.recoveryCleanup(false)) {
+                    txnTable.insert(scrambledTxnId).init(txn, latch);
                 }
+                // Delete entry.
+                return true;
             });
         }
 
@@ -179,16 +178,14 @@ final class ReplRedoEngine implements RedoVisitor {
         mOpLatch.acquireShared();
 
         // Reset and discard all transactions.
-        mTransactions.traverse(new LHashTable.Visitor<TxnEntry, IOException>() {
-            public boolean visit(TxnEntry entry) throws IOException {
-                Latch latch = entry.latch();
-                try {
-                    entry.mTxn.recoveryCleanup(true);
-                } finally {
-                    latch.releaseExclusive();
-                }
-                return true;
+        mTransactions.traverse((entry) -> {
+            Latch latch = entry.latch();
+            try {
+                entry.mTxn.recoveryCleanup(true);
+            } finally {
+                latch.releaseExclusive();
             }
+            return true;
         });
 
         // Now's a good time to clean out any lingering trash.
@@ -309,53 +306,49 @@ final class ReplRedoEngine implements RedoVisitor {
 
     @Override
     public boolean deleteIndex(long txnId, long indexId) throws IOException {
+        TxnEntry te = getTxnEntry(txnId);
+        LocalTransaction txn = te.mTxn;
+
+        // Open the index with the transaction to prevent deadlock
+        // when the instance is not cached and has to be loaded.
+        Index ix = getIndex(txn, indexId);
+        mIndexes.remove(indexId);
+
         // Acquire latch before performing operations with side-effects.
         mOpLatch.acquireShared();
 
-        Index ix;
-        {
-            LHashTable.ObjEntry<SoftReference<Index>> entry = mIndexes.remove(indexId);
-            if (entry == null || (ix = entry.value.get()) == null) {
-                ix = mDatabase.anyIndexById(indexId);
-            }
-        }
-
-        Runnable task = null;
-
+        // Commit the transaction now and delete the index. See LocalDatabase.moveToTrash for
+        // more info.
+        Latch latch = te.latch();
         try {
-            while (ix != null) {
-                try {
-                    task = mDatabase.deleteIndex(ix, txnId);
-                    break;
-                } catch (ClosedIndexException e) {
-                    // User closed the shared index reference, so re-open it.
-                    ix = openIndex(indexId, null);
-                }
+            try {
+                txn.commit();
+            } finally {
+                txn.exit();
             }
-        } catch (RuntimeException e) {
-            EventListener listener = mDatabase.mEventListener;
-            if (listener != null) {
-                listener.notify(EventType.REPLICATION_WARNING,
-                                "Unable to delete index: %1$s", rootCause(e));
-                // Disable notification.
-                ix = null;
-            }
+        } finally {
+            latch.releaseExclusive();
         }
 
         // Only release if no exception.
         opFinishedShared();
 
-        if (ix != null && task != null) {
+        if (ix != null) {
+            ix.close();
             try {
                 mManager.notifyDrop(ix);
             } catch (Throwable e) {
                 uncaught(e);
             }
+        }
 
+        Runnable task = mDatabase.replicaDeleteTree(indexId);
+
+        if (task != null) {
             try {
                 // Allow index deletion to run concurrently. If multiple deletes are received
                 // concurrently, then the application is likely doing concurrent deletes.
-                Thread deletion = new Thread(task, "IndexDeletion-" + ix.getNameString());
+                Thread deletion = new Thread(task, "IndexDeletion-" + (ix == null ? indexId : ix.getNameString()));
                 deletion.setDaemon(true);
                 deletion.start();
             } catch (Throwable e) {
@@ -382,7 +375,7 @@ final class ReplRedoEngine implements RedoVisitor {
         mOpLatch.acquireShared();
 
         if (e == null) {
-            Transaction txn = new Transaction
+            LocalTransaction txn = new LocalTransaction
                 (mDatabase, txnId, LockMode.UPGRADABLE_READ, INFINITE_TIMEOUT);
             mTransactions.insert(scrambledTxnId).init(txn, selectLatch(scrambledTxnId));
 
@@ -496,19 +489,16 @@ final class ReplRedoEngine implements RedoVisitor {
 
         TxnEntry te = removeTxnEntry(txnId);
 
-        if (te == null) {
-            // TODO: Throw a better exception.
-            throw new CorruptDatabaseException("Transaction not found: " + txnId);
-        }
+        if (te != null) {
+            Latch latch = te.latch();
+            try {
+                // Commit is expected to complete quickly, so don't let another
+                // task thread run.
 
-        Latch latch = te.latch();
-        try {
-            // Commit is expected to complete quickly, so don't let another
-            // task thread run.
-
-            te.mTxn.commitAll();
-        } finally {
-            latch.releaseExclusive();
+                te.mTxn.commitAll();
+            } finally {
+                latch.releaseExclusive();
+            }
         }
 
         // Only release if no exception.
@@ -530,7 +520,7 @@ final class ReplRedoEngine implements RedoVisitor {
 
         Latch latch = te.latch();
         try {
-            Transaction txn = te.mTxn;
+            LocalTransaction txn = te.mTxn;
 
             // Locks must be acquired in their original order to avoid
             // deadlock, so don't allow another task thread to run yet.
@@ -573,7 +563,7 @@ final class ReplRedoEngine implements RedoVisitor {
 
         Latch latch = te.latch();
         try {
-            Transaction txn = te.mTxn;
+            LocalTransaction txn = te.mTxn;
 
             // Locks must be acquired in their original order to avoid
             // deadlock, so don't allow another task thread to run yet.
@@ -651,7 +641,7 @@ final class ReplRedoEngine implements RedoVisitor {
 
         Latch latch = te.latch();
         try {
-            Transaction txn = te.mTxn;
+            LocalTransaction txn = te.mTxn;
 
             // Locks must be acquired in their original order to avoid
             // deadlock, so don't allow another task thread to run yet.
@@ -770,7 +760,7 @@ final class ReplRedoEngine implements RedoVisitor {
         if (e == null) {
             // Create transaction on demand if necessary. Startup transaction recovery only
             // applies to those which generated undo log entries.
-            Transaction txn = new Transaction
+            LocalTransaction txn = new LocalTransaction
                 (mDatabase, txnId, LockMode.UPGRADABLE_READ, INFINITE_TIMEOUT);
             e = mTransactions.insert(scrambledTxnId);
             e.init(txn, selectLatch(scrambledTxnId));
@@ -792,7 +782,7 @@ final class ReplRedoEngine implements RedoVisitor {
      *
      * @return null if not found
      */
-    private Index getIndex(long indexId) throws IOException {
+    private Index getIndex(Transaction txn, long indexId) throws IOException {
         LHashTable.ObjEntry<SoftReference<Index>> entry = mIndexes.get(indexId);
         if (entry != null) {
             Index ix = entry.value.get();
@@ -800,7 +790,17 @@ final class ReplRedoEngine implements RedoVisitor {
                 return ix;
             }
         }
-        return openIndex(indexId, entry);
+        return openIndex(txn, indexId, entry);
+    }
+
+
+    /**
+     * Returns the index from the local cache, opening it if necessary.
+     *
+     * @return null if not found
+     */
+    private Index getIndex(long indexId) throws IOException {
+        return getIndex(null, indexId);
     }
 
     /**
@@ -808,10 +808,10 @@ final class ReplRedoEngine implements RedoVisitor {
      *
      * @return null if not found
      */
-    private Index openIndex(long indexId, LHashTable.ObjEntry<SoftReference<Index>> entry)
+    private Index openIndex(Transaction txn, long indexId, LHashTable.ObjEntry<SoftReference<Index>> entry)
         throws IOException
     {
-        Index ix = mDatabase.anyIndexById(indexId);
+        Index ix = mDatabase.anyIndexById(txn, indexId);
         if (ix == null) {
             return null;
         }
@@ -825,16 +825,21 @@ final class ReplRedoEngine implements RedoVisitor {
 
         if (entry != null) {
             // Remove entries for all other cleared references, freeing up memory.
-            mIndexes.traverse(new LHashTable.Visitor<
-                              LHashTable.ObjEntry<SoftReference<Index>>, RuntimeException>()
-            {
-                public boolean visit(LHashTable.ObjEntry<SoftReference<Index>> entry) {
-                    return entry.value.get() == null;
-                }
-            });
+            mIndexes.traverse((e) -> e.value.get() == null);
         }
 
         return ix;
+    }
+
+    /**
+     * Opens the index and puts it into the local cache, replacing the existing entry.
+     *
+     * @return null if not found
+     */
+    private Index openIndex(long indexId, LHashTable.ObjEntry<SoftReference<Index>> entry)
+        throws IOException
+    {
+        return openIndex(null, indexId, entry);
     }
 
     private Latch selectLatch(long scrambledTxnId) {
@@ -884,12 +889,14 @@ final class ReplRedoEngine implements RedoVisitor {
             // End of stream reached, and so local instance is now leader.
             reset();
         } catch (Throwable e) {
-            EventListener listener = mDatabase.mEventListener;
-            if (listener != null) {
-                listener.notify(EventType.REPLICATION_PANIC,
-                                "Unexpected replication exception: %1$s", rootCause(e));
-            } else {
-                uncaught(e);
+            if (!mDatabase.mClosed) {
+                EventListener listener = mDatabase.mEventListener;
+                if (listener != null) {
+                    listener.notify(EventType.REPLICATION_PANIC,
+                                    "Unexpected replication exception: %1$s", rootCause(e));
+                } else {
+                    uncaught(e);
+                }
             }
             mTotalThreads.decrementAndGet();
             mDecodeLatch.releaseExclusive();
@@ -943,10 +950,10 @@ final class ReplRedoEngine implements RedoVisitor {
     }
 
     static final class TxnEntry extends LHashTable.Entry<TxnEntry> {
-        Transaction mTxn;
+        LocalTransaction mTxn;
         Latch mLatch;
 
-        void init(Transaction txn, Latch latch) {
+        void init(LocalTransaction txn, Latch latch) {
             mTxn = txn;
             mLatch = latch;
         }

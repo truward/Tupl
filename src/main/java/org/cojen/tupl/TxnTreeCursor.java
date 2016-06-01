@@ -1,5 +1,5 @@
 /*
- *  Copyright 2014 Brian S O'Neill
+ *  Copyright 2014-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,6 +23,7 @@ import java.io.IOException;
  *
  * @author Brian S O'Neill
  */
+/*P*/
 final class TxnTreeCursor extends TreeCursor {
     TxnTreeCursor(TxnTree tree, Transaction txn) {
         super(tree, txn);
@@ -40,14 +41,14 @@ final class TxnTreeCursor extends TreeCursor {
         }
 
         try {
-            Transaction txn = mTxn;
+            LocalTransaction txn = mTxn;
             if (txn == null) {
                 txn = mTree.mDatabase.newAlwaysRedoTransaction();
                 try {
                     if (txn.lockMode() != LockMode.UNSAFE) {
                         txn.lockExclusive(mTree.mId, key, keyHash());
                     }
-                    store(txn, leafExclusive(), value, false);
+                    store(txn, leafExclusive(), value);
                     txn.commit();
                 } catch (Throwable e) {
                     txn.reset();
@@ -57,7 +58,7 @@ final class TxnTreeCursor extends TreeCursor {
                 if (txn.lockMode() != LockMode.UNSAFE) {
                     txn.lockExclusive(mTree.mId, key, keyHash());
                 }
-                store(txn, leafExclusive(), value, false);
+                store(txn, leafExclusive(), value);
             }
         } catch (Throwable e) {
             throw handleException(e, false);
@@ -72,7 +73,7 @@ final class TxnTreeCursor extends TreeCursor {
         }
 
         try {
-            Transaction txn = mTxn;
+            LocalTransaction txn = mTxn;
             if (txn == null) {
                 txn = mTree.mDatabase.newAlwaysRedoTransaction();
                 try {
@@ -86,16 +87,6 @@ final class TxnTreeCursor extends TreeCursor {
             }
         } catch (Throwable e) {
             throw handleException(e, false);
-        }
-    }
-
-    private void doCommit(Transaction txn, byte[] key, byte[] value) throws IOException {
-        if (txn.lockMode() == LockMode.UNSAFE) {
-            store(txn, leafExclusive(), value, false);
-            txn.commit();
-        } else {
-            txn.lockExclusive(mTree.mId, key, keyHash());
-            txn.storeCommit(this, value);
         }
     }
 }

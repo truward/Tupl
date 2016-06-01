@@ -1,5 +1,5 @@
 /*
- *  Copyright 2015 Brian S O'Neill
+ *  Copyright 2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -69,6 +69,33 @@ public class DirectAccess {
         cLocalBuffer2 = local2;
     }
 
+    private final ThreadLocal<ByteBuffer> mLocalBuffer;
+
+    /**
+     * @throws UnsupportedOperationException if not supported
+     */
+    public DirectAccess() {
+        if (!isSupported()) {
+            throw new UnsupportedOperationException();
+        }
+        mLocalBuffer = new ThreadLocal<>();
+    }
+
+    /**
+     * Returns an instance-specific thread-local ByteBuffer which references any memory
+     * address. The position is set to zero, the limit and capacity are set to the given
+     * length.
+     *
+     * @throws UnsupportedOperationException if not supported
+     */
+    public ByteBuffer prepare(long ptr, int length) {
+        return ref(mLocalBuffer, ptr, length);
+    }
+
+    public static boolean isSupported() {
+        return cDirectCtor != null;
+    }
+
     /**
      * Returns a thread-local ByteBuffer which references any memory address. The position is
      * set to zero, the limit and capacity are set to the given length.
@@ -86,6 +113,17 @@ public class DirectAccess {
      */
     public static ByteBuffer ref2(long ptr, int length) {
         return ref(cLocalBuffer2, ptr, length);
+    }
+
+    public static long getAddress(Buffer buf) {
+        if (!buf.isDirect()) {
+            throw new IllegalArgumentException("Not a direct buffer");
+        }
+        try {
+            return cDirectAddress.getLong(buf);
+        } catch (Exception e) {
+            throw new UnsupportedOperationException(e);
+        }
     }
 
     private static ByteBuffer ref(ThreadLocal<ByteBuffer> local, long ptr, int length) {
@@ -112,6 +150,10 @@ public class DirectAccess {
         return bb;
     }
 
+    /**
+     * Optionally unreference a buffer. The garbage collector does not attempt to free memory
+     * referenced by a ByteBuffer created by this class.
+     */
     public static void unref(ByteBuffer bb) {
         bb.position(0).limit(0);
         try {

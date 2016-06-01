@@ -1,5 +1,5 @@
 /*
- *  Copyright 2014 Brian S O'Neill
+ *  Copyright 2014-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -18,13 +18,16 @@ package org.cojen.tupl;
 
 import java.io.IOException;
 
+import java.util.Arrays;
+
 /**
  * Tree which uses an explicit transaction when none is specified, excluding loads.
  *
  * @author Brian S O'Neill
  */
+/*P*/
 final class TxnTree extends Tree {
-    TxnTree(Database db, long id, byte[] idBytes, byte[] name, Node root) {
+    TxnTree(LocalDatabase db, long id, byte[] idBytes, byte[] name, Node root) {
         super(db, id, idBytes, name, root);
     }
 
@@ -40,8 +43,14 @@ final class TxnTree extends Tree {
         } else {
             txn = mDatabase.newAlwaysRedoTransaction();
             try {
-                super.store(txn, key, value);
-                txn.commit();
+                TreeCursor c = new TreeCursor(this, txn);
+                try {
+                    c.mKeyOnly = true;
+                    c.doFind(key);
+                    c.commit(value);
+                } finally {
+                    c.reset();
+                }
             } catch (Throwable e) {
                 txn.reset();
                 throw e;
@@ -56,9 +65,15 @@ final class TxnTree extends Tree {
         } else {
             txn = mDatabase.newAlwaysRedoTransaction();
             try {
-                byte[] oldValue = super.exchange(txn, key, value);
-                txn.commit();
-                return oldValue;
+                TreeCursor c = new TreeCursor(this, txn);
+                try {
+                    c.doFind(key);
+                    byte[] oldValue = c.mValue;
+                    c.commit(value);
+                    return oldValue;
+                } finally {
+                    c.reset();
+                }
             } catch (Throwable e) {
                 txn.reset();
                 throw e;
@@ -73,9 +88,20 @@ final class TxnTree extends Tree {
         } else {
             txn = mDatabase.newAlwaysRedoTransaction();
             try {
-                boolean result = super.insert(txn, key, value);
-                txn.commit();
-                return result;
+                TreeCursor c = new TreeCursor(this, txn);
+                try {
+                    c.mKeyOnly = true;
+                    c.doFind(key);
+                    if (c.mValue == null) {
+                        c.commit(value);
+                        return true;
+                    } else {
+                        txn.reset();
+                        return false;
+                    }
+                } finally {
+                    c.reset();
+                }
             } catch (Throwable e) {
                 txn.reset();
                 throw e;
@@ -90,9 +116,20 @@ final class TxnTree extends Tree {
         } else {
             txn = mDatabase.newAlwaysRedoTransaction();
             try {
-                boolean result = super.replace(txn, key, value);
-                txn.commit();
-                return result;
+                TreeCursor c = new TreeCursor(this, txn);
+                try {
+                    c.mKeyOnly = true;
+                    c.doFind(key);
+                    if (c.mValue != null) {
+                        c.commit(value);
+                        return true;
+                    } else {
+                        txn.reset();
+                        return false;
+                    }
+                } finally {
+                    c.reset();
+                }
             } catch (Throwable e) {
                 txn.reset();
                 throw e;
@@ -109,9 +146,19 @@ final class TxnTree extends Tree {
         } else {
             txn = mDatabase.newAlwaysRedoTransaction();
             try {
-                boolean result = super.update(txn, key, oldValue, newValue);
-                txn.commit();
-                return result;
+                TreeCursor c = new TreeCursor(this, txn);
+                try {
+                    c.doFind(key);
+                    if (Arrays.equals(oldValue, c.mValue)) {
+                        c.commit(newValue);
+                        return true;
+                    } else {
+                        txn.reset();
+                        return false;
+                    }
+                } finally {
+                    c.reset();
+                }
             } catch (Throwable e) {
                 txn.reset();
                 throw e;
@@ -119,10 +166,12 @@ final class TxnTree extends Tree {
         }
     }
 
+    /*
     @Override
     public Stream newStream() {
         TreeCursor cursor = new TxnTreeCursor(this);
         cursor.autoload(false);
         return new TreeValueStream(cursor);
     }
+    */
 }

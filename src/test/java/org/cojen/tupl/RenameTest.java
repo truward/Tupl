@@ -1,5 +1,5 @@
 /*
- *  Copyright 2013 Brian S O'Neill
+ *  Copyright 2013-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,8 @@ public class RenameTest {
 
     @Before
     public void createTempDb() throws Exception {
-        mConfig = new DatabaseConfig().durabilityMode(DurabilityMode.NO_FLUSH);
+        mConfig = new DatabaseConfig()
+            .directPageAccess(false).durabilityMode(DurabilityMode.NO_FLUSH);
         mDb = newTempDatabase(mConfig);
     }
 

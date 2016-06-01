@@ -1,5 +1,5 @@
 /*
- *  Copyright 2013 Brian S O'Neill
+ *  Copyright 2013-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,6 +37,15 @@ public class CompactTest {
         org.junit.runner.JUnitCore.main(CompactTest.class.getName());
     }
 
+    protected DatabaseConfig decorate(DatabaseConfig config) throws Exception {
+        config.directPageAccess(false);
+        return config;
+    }
+
+    protected Database newTempDb() throws Exception {
+        return newTempDatabase();
+    }
+
     @After
     public void teardown() throws Exception {
         deleteTempDatabases();
@@ -47,7 +56,7 @@ public class CompactTest {
 
     @Test
     public void basic() throws Exception {
-        mDb = newTempDatabase();
+        mDb = newTempDb();
 
         final Index ix = mDb.openIndex("test");
         final int seed = 98232;
@@ -115,10 +124,10 @@ public class CompactTest {
 
     @Test
     public void largeValues() throws Exception {
-        mDb = newTempDatabase(new DatabaseConfig()
-                              .pageSize(512)
-                              .minCacheSize(10000000)
-                              .durabilityMode(DurabilityMode.NO_FLUSH));
+        mDb = newTempDatabase(decorate(new DatabaseConfig()
+                                       .pageSize(512)
+                                       .minCacheSize(10000000)
+                                       .durabilityMode(DurabilityMode.NO_FLUSH)));
 
         final Index ix = mDb.openIndex("test");
         final int seed = 1234;
@@ -193,7 +202,7 @@ public class CompactTest {
 
     @Test
     public void manualAbort() throws Exception {
-        mDb = newTempDatabase();
+        mDb = newTempDb();
 
         final Index ix = mDb.openIndex("test");
         final int seed = 98232;
@@ -236,7 +245,7 @@ public class CompactTest {
 
     @Test
     public void autoAbort() throws Exception {
-        mDb = newTempDatabase();
+        mDb = newTempDb();
 
         final Index ix = mDb.openIndex("test");
         final int seed = 98232;
@@ -343,10 +352,10 @@ public class CompactTest {
     }
 
     private void doStress() throws Exception {
-        mDb = newTempDatabase(new DatabaseConfig()
-                              .pageSize(512)
-                              .minCacheSize(100000000)
-                              .durabilityMode(DurabilityMode.NO_FLUSH));
+        mDb = newTempDatabase(decorate(new DatabaseConfig()
+                                       .pageSize(512)
+                                       .minCacheSize(100000000)
+                                       .durabilityMode(DurabilityMode.NO_FLUSH)));
 
         class Compactor extends Thread {
             volatile boolean stop;
@@ -419,7 +428,7 @@ public class CompactTest {
         // scan. This is only a problem for long running transactions -- they need to span the
         // entire duration of the compaction.
 
-        mDb = newTempDatabase();
+        mDb = newTempDb();
         Index ix = mDb.openIndex("test");
 
         for (int i=100000; i<200000; i++) {
@@ -464,7 +473,7 @@ public class CompactTest {
         // trash could be scanned, it would also need to check if compaction is in progress
         // when values move to and from the trash.
 
-        mDb = newTempDatabase();
+        mDb = newTempDb();
         Index ix = mDb.openIndex("test");
 
         byte[] key = "hello".getBytes();
@@ -496,10 +505,10 @@ public class CompactTest {
         // Random inserts with a small cache size tends to create a lot of extra unused space
         // in the file. Verify compaction can reclaim the space.
 
-        mDb = newTempDatabase(new DatabaseConfig()
-                              .minCacheSize(1000000)
-                              .checkpointRate(-1, null)
-                              .durabilityMode(DurabilityMode.NO_FLUSH));
+        mDb = newTempDatabase(decorate(new DatabaseConfig()
+                                       .minCacheSize(1000000)
+                                       .checkpointRate(-1, null)
+                                       .durabilityMode(DurabilityMode.NO_FLUSH)));
         
         Index ix = mDb.openIndex("test");
 
@@ -543,9 +552,9 @@ public class CompactTest {
 
     @Test
     public void snapshotAbort() throws Exception {
-        mDb = newTempDatabase(new DatabaseConfig()
-                              .checkpointRate(-1, null)
-                              .durabilityMode(DurabilityMode.NO_FLUSH));
+        mDb = newTempDatabase(decorate(new DatabaseConfig()
+                                       .checkpointRate(-1, null)
+                                       .durabilityMode(DurabilityMode.NO_FLUSH)));
 
         Index ix = mDb.openIndex("test");
 
@@ -580,7 +589,7 @@ public class CompactTest {
 
         ByteArrayInputStream bin = new ByteArrayInputStream(bout.toByteArray());
 
-        DatabaseConfig config = new DatabaseConfig().baseFile(newTempBaseFile());
+        DatabaseConfig config = decorate(new DatabaseConfig().baseFile(newTempBaseFile()));
 
         mDb = Database.restoreFromSnapshot(config, bin);
 

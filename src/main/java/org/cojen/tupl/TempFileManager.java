@@ -1,5 +1,5 @@
 /*
- *  Copyright 2012-2013 Brian S O'Neill
+ *  Copyright 2012-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ import org.cojen.tupl.io.FileFactory;
  *
  * @author Brian S O'Neill
  */
-final class TempFileManager implements CauseCloseable, Checkpointer.Shutdown {
+final class TempFileManager implements CauseCloseable, ShutdownHook {
     private File mBaseFile;
     private final FileFactory mFileFactory;
     private long mCount;

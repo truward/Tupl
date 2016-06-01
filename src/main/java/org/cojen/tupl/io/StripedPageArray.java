@@ -1,5 +1,5 @@
 /*
- *  Copyright 2012-2013 Brian S O'Neill
+ *  Copyright 2012-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -101,24 +101,92 @@ public class StripedPageArray extends PageArray {
     }
 
     @Override
-    public void readPage(long index, /*P*/ byte[] buf, int offset, int length) throws IOException {
-        PageArray[] arrays = mArrays;
-        int stripes = arrays.length;
-        arrays[(int) (index % stripes)].readPage(index / stripes, buf, offset, length);
+    public long getPageCountLimit() throws IOException {
+        long limit = -1;
+
+        for (PageArray pa : mArrays) {
+            long subLimit = pa.getPageCountLimit();
+            if (subLimit >= 0) {
+                limit = limit < 0 ? subLimit : Math.min(limit, subLimit);
+            }
+        }
+
+        return limit < 0 ? limit : limit * mArrays.length; 
     }
 
     @Override
-    public void writePage(long index, /*P*/ byte[] buf, int offset) throws IOException {
+    public void readPage(long index, byte[] dst, int offset, int length) throws IOException {
         PageArray[] arrays = mArrays;
         int stripes = arrays.length;
-        arrays[(int) (index % stripes)].writePage(index / stripes, buf, offset);
+        arrays[(int) (index % stripes)].readPage(index / stripes, dst, offset, length);
     }
 
     @Override
-    public /*P*/ byte[] evictPage(long index, /*P*/ byte[] buf) throws IOException {
+    public void readPage(long index, long dstPtr, int offset, int length) throws IOException {
+        PageArray[] arrays = mArrays;
+        int stripes = arrays.length;
+        arrays[(int) (index % stripes)].readPage(index / stripes, dstPtr, offset, length);
+    }
+
+    @Override
+    public void writePage(long index, byte[] src, int offset) throws IOException {
+        PageArray[] arrays = mArrays;
+        int stripes = arrays.length;
+        arrays[(int) (index % stripes)].writePage(index / stripes, src, offset);
+    }
+
+    @Override
+    public void writePage(long index, long srcPtr, int offset) throws IOException {
+        PageArray[] arrays = mArrays;
+        int stripes = arrays.length;
+        arrays[(int) (index % stripes)].writePage(index / stripes, srcPtr, offset);
+    }
+
+    @Override
+    public byte[] evictPage(long index, byte[] buf) throws IOException {
         PageArray[] arrays = mArrays;
         int stripes = arrays.length;
         return arrays[(int) (index % stripes)].evictPage(index / stripes, buf);
+    }
+
+    @Override
+    public long evictPage(long index, long bufPtr) throws IOException {
+        PageArray[] arrays = mArrays;
+        int stripes = arrays.length;
+        return arrays[(int) (index % stripes)].evictPage(index / stripes, bufPtr);
+    }
+
+    @Override
+    public long directPagePointer(long index) throws IOException {
+        PageArray[] arrays = mArrays;
+        int stripes = arrays.length;
+        return arrays[(int) (index % stripes)].directPagePointer(index / stripes);
+    }
+
+    @Override
+    public long copyPage(long srcIndex, long dstIndex) throws IOException {
+        PageArray[] arrays = mArrays;
+        int stripes = arrays.length;
+
+        PageArray src = arrays[(int) (srcIndex % stripes)];
+        srcIndex /= stripes;
+
+        PageArray dst = arrays[(int) (dstIndex % stripes)];
+        dstIndex /= stripes;
+
+        if (src == dst) {
+            return dst.copyPage(srcIndex, dstIndex);
+        } else {
+            return dst.copyPageFromPointer(src.directPagePointer(srcIndex), dstIndex);
+        }
+    }
+
+    @Override
+    public long copyPageFromPointer(long srcPointer, long dstIndex) throws IOException {
+        PageArray[] arrays = mArrays;
+        int stripes = arrays.length;
+        return arrays[(int) (dstIndex % stripes)]
+            .copyPageFromPointer(srcPointer, dstIndex / stripes);
     }
 
     @Override
@@ -162,6 +230,17 @@ public class StripedPageArray extends PageArray {
         if (ex != null) {
             throw ex;
         }
+    }
+
+    @Override
+    public StripedPageArray open() throws IOException {
+        if (!mSyncService.isShutdown()) {
+            return this;
+        }
+        for (int i=0; i<mArrays.length; i++) {
+            mArrays[i] = mArrays[i].open();
+        }
+        return new StripedPageArray(mArrays);
     }
 
     private static class Syncer implements Runnable {

@@ -1,5 +1,5 @@
 /*
- *  Copyright 2012-2013 Brian S O'Neill
+ *  Copyright 2012-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -133,10 +133,12 @@ abstract class SubView implements View {
         throw fail();
     }
 
+    /*
     @Override
     public Stream newStream() {
         return new SubStream(this, mSource.newStream());
     }
+    */
 
     @Override
     public View viewTransformed(Transformer transformer) {

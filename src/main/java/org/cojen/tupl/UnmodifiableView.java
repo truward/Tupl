@@ -1,5 +1,5 @@
 /*
- *  Copyright 2013 Brian S O'Neill
+ *  Copyright 2013-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ final class UnmodifiableView implements Index {
     @Override
     public String toString() {
         if (mSource instanceof Index) {
-            return Tree.toString(this);
+            return ViewUtils.toString(this);
         }
         return super.toString();
     }
@@ -124,6 +124,14 @@ final class UnmodifiableView implements Index {
     }
 
     @Override
+    public long evict(Transaction txn, byte[] lowKey, byte[] highKey,
+                      Filter evictionFilter, boolean autoload)
+        throws IOException
+    {
+        throw new UnmodifiableViewException();
+    }
+
+    @Override
     public LockResult lockShared(Transaction txn, byte[] key)
         throws LockFailureException, ViewConstraintException
     {
@@ -149,44 +157,46 @@ final class UnmodifiableView implements Index {
         return mSource.lockCheck(txn, key);
     }
 
+    /*
     @Override
     public Stream newStream() {
         return new UnmodifiableStream(mSource.newStream());
     }
+    */
 
     @Override
     public View viewGe(byte[] key) {
-        return new UnmodifiableView(mSource.viewGe(key));
+        return apply(mSource.viewGe(key));
     }
 
     @Override
     public View viewGt(byte[] key) {
-        return new UnmodifiableView(mSource.viewGt(key));
+        return apply(mSource.viewGt(key));
     }
 
     @Override
     public View viewLe(byte[] key) {
-        return new UnmodifiableView(mSource.viewLe(key));
+        return apply(mSource.viewLe(key));
     }
 
     @Override
     public View viewLt(byte[] key) {
-        return new UnmodifiableView(mSource.viewLt(key));
+        return apply(mSource.viewLt(key));
     }
 
     @Override
     public View viewPrefix(byte[] prefix, int trim) {
-        return new UnmodifiableView(mSource.viewPrefix(prefix, trim));
+        return apply(mSource.viewPrefix(prefix, trim));
     }
 
     @Override
     public View viewTransformed(Transformer transformer) {
-        return new UnmodifiableView(mSource.viewTransformed(transformer));
+        return apply(mSource.viewTransformed(transformer));
     }
 
     @Override
     public View viewReverse() {
-        return new UnmodifiableView(mSource.viewReverse());
+        return apply(mSource.viewReverse());
     }
 
     @Override
@@ -197,6 +207,14 @@ final class UnmodifiableView implements Index {
     @Override
     public boolean isUnmodifiable() {
         return true;
+    }
+
+    @Override
+    public Stats analyze(byte[] lowKey, byte[] highKey) throws IOException {
+        if (mSource instanceof Index) {
+            return ((Index) mSource).analyze(lowKey, highKey);
+        }
+        throw new UnsupportedOperationException();
     }
 
     @Override

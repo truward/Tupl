@@ -1,5 +1,5 @@
 /*
- *  Copyright 2012-2013 Brian S O'Neill
+ *  Copyright 2012-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,8 @@ import static org.cojen.tupl.Utils.*;
  * @author Brian S O'Neill
  * @see RedoDecoder
  */
-abstract class RedoWriter implements CauseCloseable, Checkpointer.Shutdown, Flushable {
+/*P*/
+abstract class RedoWriter implements CauseCloseable, ShutdownHook, Flushable {
     private final byte[] mBuffer;
     private int mBufferPos;
 
@@ -190,7 +191,7 @@ abstract class RedoWriter implements CauseCloseable, Checkpointer.Shutdown, Flus
      * @param txn transaction committed
      * @param commitPos highest position to sync (exclusive)
      */
-    public void txnCommitSync(Transaction txn, long commitPos) throws IOException {
+    public void txnCommitSync(LocalTransaction txn, long commitPos) throws IOException {
         sync(false);
     }
 
@@ -305,9 +306,9 @@ abstract class RedoWriter implements CauseCloseable, Checkpointer.Shutdown, Flus
         doFlush();
     }
 
-    public void sync() throws IOException {
+    public void flushSync(boolean metadata) throws IOException {
         flush();
-        sync(false);
+        sync(metadata);
     }
 
     @Override
@@ -417,6 +418,11 @@ abstract class RedoWriter implements CauseCloseable, Checkpointer.Shutdown, Flus
      * this method returns.
      */
     abstract void checkpointStarted() throws IOException;
+
+    /**
+     * Called after all dirty pages have flushed.
+     */
+    abstract void checkpointFlushed() throws IOException;
 
     /**
      * Writer can discard all redo data lower than the checkpointed position, which was

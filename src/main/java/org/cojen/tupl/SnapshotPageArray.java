@@ -1,5 +1,5 @@
 /*
- *  Copyright 2013 Brian S O'Neill
+ *  Copyright 2013-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,8 @@ import static java.lang.System.arraycopy;
 
 import org.cojen.tupl.io.CauseCloseable;
 import org.cojen.tupl.io.PageArray;
+
+import org.cojen.tupl.util.Latch;
 
 import static org.cojen.tupl.PageOps.*;
 import static org.cojen.tupl.Utils.*;
@@ -79,26 +81,55 @@ final class SnapshotPageArray extends PageArray {
     }
 
     @Override
-    public void readPage(long index, /*P*/ byte[] buf, int offset, int length) throws IOException {
+    public long getPageCountLimit() throws IOException {
+        return mSource.getPageCountLimit();
+    }
+
+    @Override
+    public void readPage(long index, byte[] dst, int offset, int length) throws IOException {
         PageCache cache = mCache;
-        if (cache == null || !cache.remove(index, buf, offset, length)) {
-            mSource.readPage(index, buf, offset, length);
+        if (cache == null || !cache.remove(index, dst, offset, length)) {
+            mSource.readPage(index, dst, offset, length);
         }
     }
 
     @Override
-    public void writePage(long index, /*P*/ byte[] buf, int offset) throws IOException {
-        preWritePage(index, buf, offset);
-        mSource.writePage(index, buf, offset);
+    public void readPage(long index, long dstPtr, int offset, int length) throws IOException {
+        PageCache cache = mCache;
+        if (cache == null || !cache.remove(index, dstPtr, offset, length)) {
+            mSource.readPage(index, dstPtr, offset, length);
+        }
     }
 
     @Override
-    public /*P*/ byte[] evictPage(long index, /*P*/ byte[] buf) throws IOException {
-        preWritePage(index, buf, 0);
+    public void writePage(long index, byte[] src, int offset) throws IOException {
+        preWritePage(index);
+        cachePage(index, src, offset);
+        mSource.writePage(index, src, offset);
+    }
+
+    @Override
+    public void writePage(long index, long srcPtr, int offset) throws IOException {
+        preWritePage(index);
+        cachePage(index, srcPtr, offset);
+        mSource.writePage(index, srcPtr, offset);
+    }
+
+    @Override
+    public byte[] evictPage(long index, byte[] buf) throws IOException {
+        preWritePage(index);
+        cachePage(index, buf, 0);
         return mSource.evictPage(index, buf);
     }
 
-    private void preWritePage(long index, /*P*/ byte[] buf, int offset) throws IOException {
+    @Override
+    public long evictPage(long index, long bufPtr) throws IOException {
+        preWritePage(index);
+        cachePage(index, bufPtr, 0);
+        return mSource.evictPage(index, bufPtr);
+    }
+
+    private void preWritePage(long index) throws IOException {
         if (index < 0) {
             throw new IndexOutOfBoundsException(String.valueOf(index));
         }
@@ -111,15 +142,21 @@ final class SnapshotPageArray extends PageArray {
                 snapshot.capture(index);
             }
         }
-
-        cachePage(index, buf, offset);
     }
 
     @Override
-    public void cachePage(long index, /*P*/ byte[] buf, int offset) {
+    public void cachePage(long index, byte[] src, int offset) {
         PageCache cache = mCache;
         if (cache != null) {
-            cache.add(index, buf, offset, p_length(buf), true);
+            cache.add(index, src, offset, true);
+        }
+    }
+
+    @Override
+    public void cachePage(long index, long srcPtr, int offset) {
+        PageCache cache = mCache;
+        if (cache != null) {
+            cache.add(index, srcPtr, offset, true);
         }
     }
 
@@ -128,6 +165,45 @@ final class SnapshotPageArray extends PageArray {
         PageCache cache = mCache;
         if (cache != null) {
             cache.remove(index, p_null(), 0, 0);
+        }
+    }
+
+    @Override
+    public long directPagePointer(long index) throws IOException {
+        if (mCache != null) {
+            throw new IllegalStateException();
+        }
+        return mSource.directPagePointer(index);
+    }
+
+    @Override
+    public long copyPage(long srcIndex, long dstIndex) throws IOException {
+        preCopyPage(dstIndex);
+        return mSource.copyPage(srcIndex, dstIndex);
+    }
+
+    @Override
+    public long copyPageFromPointer(long srcPointer, long dstIndex) throws IOException {
+        preCopyPage(dstIndex);
+        return mSource.copyPageFromPointer(srcPointer, dstIndex);
+    }
+
+    private void preCopyPage(long dstIndex) throws IOException {
+        if (mCache != null) {
+            throw new IllegalStateException();
+        }
+
+        if (dstIndex < 0) {
+            throw new IndexOutOfBoundsException(String.valueOf(dstIndex));
+        }
+
+        Object obj = mSnapshots;
+        if (obj != null) {
+            if (obj instanceof SnapshotImpl) {
+                ((SnapshotImpl) obj).capture(dstIndex);
+            } else for (SnapshotImpl snapshot : (SnapshotImpl[]) obj) {
+                snapshot.capture(dstIndex);
+            }
         }
     }
 
@@ -152,10 +228,10 @@ final class SnapshotPageArray extends PageArray {
      * @param pageCount total number of pages to include in snapshot
      * @param redoPos redo log position for the snapshot
      */
-    Snapshot beginSnapshot(Database db, long pageCount, long redoPos) throws IOException {
+    Snapshot beginSnapshot(LocalDatabase db, long pageCount, long redoPos) throws IOException {
         pageCount = Math.min(pageCount, getPageCount());
 
-        Database nodeCache = db;
+        LocalDatabase nodeCache = db;
 
         // Snapshot does not decrypt pages.
         PageArray rawSource = mRawSource;
@@ -224,7 +300,7 @@ final class SnapshotPageArray extends PageArray {
     }
 
     class SnapshotImpl implements CauseCloseable, Snapshot {
-        private final Database mNodeCache;
+        private final LocalDatabase mNodeCache;
         private final PageArray mRawPageArray;
 
         private final TempFileManager mTempFileManager;
@@ -253,7 +329,7 @@ final class SnapshotPageArray extends PageArray {
          * @param nodeCache optional
          */
         SnapshotImpl(TempFileManager tfm, long pageCount, long redoPos,
-                     Database nodeCache, PageArray rawPageArray)
+                     LocalDatabase nodeCache, PageArray rawPageArray)
             throws IOException
         {
             mNodeCache = nodeCache;
@@ -267,7 +343,7 @@ final class SnapshotPageArray extends PageArray {
 
             DatabaseConfig config = new DatabaseConfig()
                 .pageSize(pageSize).minCacheSize(pageSize * 100);
-            mPageCopyIndex = Database.openTemp(tfm, config);
+            mPageCopyIndex = LocalDatabase.openTemp(tfm, config);
             mTempFile = config.mBaseFile;
 
             mSnapshotLock = new Object();
@@ -311,7 +387,7 @@ final class SnapshotPageArray extends PageArray {
 
             Cursor c = null;
             try {
-                final Database cache = mNodeCache;
+                final LocalDatabase cache = mNodeCache;
                 final byte[] key = new byte[8];
                 final long count = mSnapshotPageCount;
 
@@ -353,7 +429,7 @@ final class SnapshotPageArray extends PageArray {
                                     if (node.mId == index
                                         && node.mCachedState == Node.CACHED_CLEAN)
                                     {
-                                        p_copy(node.mPage, 0, pageBuffer, 0, p_length(pageBuffer));
+                                        p_copy(node.mPage, 0, pageBuffer, 0, pageSize());
                                         break read;
                                     }
                                 } finally {

@@ -1,5 +1,5 @@
 /*
- *  Copyright 2013 Brian S O'Neill
+ *  Copyright 2013-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -441,17 +441,15 @@ public class Utils {
                     }
                 }
 
-                closer = new Thread() {
-                    public void run() {
-                        try {
-                            close(resource, cause);
-                        } catch (IOException e2) {
-                            // Ignore.
-                        } finally {
-                            unregister(resource);
-                        }
+                closer = new Thread(() -> {
+                    try {
+                        close(resource, cause);
+                    } catch (IOException e2) {
+                        // Ignore.
+                    } finally {
+                        unregister(resource);
                     }
-                };
+                });
 
                 cCloseThreads.put(resource, closer);
             }

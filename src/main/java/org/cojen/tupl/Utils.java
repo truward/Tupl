@@ -1,5 +1,5 @@
 /*
- *  Copyright 2011-2013 Brian S O'Neill
+ *  Copyright 2011-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -50,29 +50,13 @@ class Utils extends org.cojen.tupl.io.Utils {
         return (i | (i >> 16)) + 1;
     }
 
-    static String toUnsignedString(long i) {
-        if (i >= 0) {
-            return Long.toString(i);
-        } else {
-            // Same trick as Long.toUnsignedString method.
-            long quot = (i >>> 1) / 5;
-            long rem = i - quot * 10;
-            return Long.toString(quot) + rem;
-        }
-    }
-
-    static int hash(long v) {
-        return (int) (v ^ (v >>> 32));
-    }
-
     private static int cSeedMix = new Random().nextInt();
 
     /**
      * @return non-zero random number, suitable for Xorshift RNG or object hashcode
      */
     static int randomSeed() {
-        long id = Thread.currentThread().getId();
-        int seed = ((int) id) ^ ((int) (id >>> 32)) ^ cSeedMix;
+        int seed = Long.hashCode(Thread.currentThread().getId()) ^ cSeedMix;
         while (seed == 0) {
             seed = new Random().nextInt();
         }
@@ -121,7 +105,8 @@ class Utils extends org.cojen.tupl.io.Utils {
 
         // Invert v *= 21
         //v *= 14933078535860113213u;
-        v = (v * 7466539267930056606L) + (v * 7466539267930056607L);
+        //v = (v * 7466539267930056606L) + (v * 7466539267930056607L);
+        v = ((v * 7466539267930056606L) << 1) + v;
 
         // Invert v = v ^ (v >>> 14)
         tmp = v ^ v >>> 14;
@@ -131,7 +116,8 @@ class Utils extends org.cojen.tupl.io.Utils {
 
         // Invert v *= 265
         //v *= 15244667743933553977u;
-        v = (v * 7622333871966776988L) + (v * 7622333871966776989L);
+        //v = (v * 7622333871966776988L) + (v * 7622333871966776989L);
+        v = ((v * 7622333871966776988L) << 1) + v;
 
         // Invert v = v ^ (v >>> 24)
         tmp = v ^ v >>> 24;

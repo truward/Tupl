@@ -1,5 +1,5 @@
 /*
- *  Copyright 2011-2013 Brian S O'Neill
+ *  Copyright 2011-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  *  limitations under the License.
  */
 
-package org.cojen.tupl;
+package org.cojen.tupl.util;
 
 import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 
@@ -24,11 +24,24 @@ import java.util.concurrent.locks.AbstractQueuedSynchronizer;
  * result, it typically outperforms ReentrantLock and Java synchronization.
  *
  * @author Brian S O'Neill
+ * @see LatchCondition
  */
 @SuppressWarnings("serial")
-class Latch extends AbstractQueuedSynchronizer {
+public class Latch extends AbstractQueuedSynchronizer {
     // In the inherited state field, high bit is set if exclusive latch is
     // held, and low bits count shared latches. Limited to (2^31)-1 shared latches.
+
+    public static final int UNLATCHED = 0, EXCLUSIVE = 0x80000000, SHARED = 1;
+
+    public Latch() {
+    }
+
+    /**
+     * @param initialState UNLATCHED, EXCLUSIVE or SHARED
+     */
+    public Latch(int initialState) {
+        setState(initialState);
+    }
 
     // Note: When acquiring the exclusive latch, a check is made first before
     // calling compareAndSetState. Considering that compareAndSetState will
@@ -42,7 +55,7 @@ class Latch extends AbstractQueuedSynchronizer {
      * threads if possible.
      */
     public final boolean tryAcquireExclusive() {
-        return getState() == 0 ? compareAndSetState(0, 0x80000001) : false;
+        return getState() == 0 ? compareAndSetState(0, EXCLUSIVE) : false;
     }
 
     /**
@@ -57,7 +70,7 @@ class Latch extends AbstractQueuedSynchronizer {
      * possible.
      */
     public final void acquireExclusive() {
-        if (getState() != 0 || !compareAndSetState(0, 0x80000001)) {
+        if (getState() != 0 || !compareAndSetState(0, EXCLUSIVE)) {
             acquire(0);
         }
     }
@@ -151,7 +164,7 @@ class Latch extends AbstractQueuedSynchronizer {
      * caller must later call releaseExclusive instead of releaseShared.
      */
     public final boolean tryUpgrade() {
-        return getState() == 1 ? compareAndSetState(1, 0x80000001) : false;
+        return getState() == 1 ? compareAndSetState(1, EXCLUSIVE) : false;
     }
 
     /**
@@ -163,7 +176,7 @@ class Latch extends AbstractQueuedSynchronizer {
 
     @Override
     protected final boolean tryAcquire(int x) {
-        return getState() == 0 ? compareAndSetState(0, 0x80000001) : false;
+        return getState() == 0 ? compareAndSetState(0, EXCLUSIVE) : false;
     }
 
     @Override
@@ -172,6 +185,9 @@ class Latch extends AbstractQueuedSynchronizer {
         while ((state = getState()) >= 0) {
             if (compareAndSetState(state, state + 1)) {
                 return 1;
+            }
+            if (hasQueuedPredecessors()) {
+                return -1;
             }
         }
         return -1;

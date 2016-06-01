@@ -1,5 +1,5 @@
 /*
- *  Copyright 2012-2013 Brian S O'Neill
+ *  Copyright 2012-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -17,8 +17,6 @@
 package org.cojen.tupl;
 
 import java.io.IOException;
-
-import java.util.concurrent.locks.Lock;
 
 import static java.lang.System.arraycopy;
 
@@ -51,7 +49,7 @@ final class FragmentedTrash {
      * @param valueStart inclusive index into entry for fragmented value; excludes value header
      * @param valueLen length of value
      */
-    void add(Transaction txn, long indexId,
+    void add(LocalTransaction txn, long indexId,
              /*P*/ byte[] entry, int keyStart, int keyLen, int valueStart, int valueLen)
         throws IOException
     {
@@ -63,13 +61,22 @@ final class FragmentedTrash {
         TreeCursor cursor = prepareEntry(txn.txnId());
         byte[] key = cursor.key();
         try {
-            // Write trash entry first, ensuring that the undo log entry will
-            // refer to something valid.
+            // Write trash entry first, ensuring that the undo log entry will refer to
+            // something valid. Cursor is bound to a bogus transaction, and so it won't acquire
+            // locks or attempt to write to the redo log. A failure here is pretty severe,
+            // since it implies that the main database file cannot be written to. One possible
+            // "recoverable" cause is a disk full, but this can still cause a database panic if
+            // it occurs during critical operations like internal node splits.
             txn.setHasTrash();
             cursor.store(payload);
             cursor.reset();
         } catch (Throwable e) {
-            txn.borked(e, false);
+            try {
+                // Always expected to rethrow an exception, not necessarily the original.
+                txn.borked(e, false);
+            } catch (Throwable e2) {
+                e = e2;
+            }
             throw closeOnFailure(cursor, e);
         }
 
@@ -138,7 +145,7 @@ final class FragmentedTrash {
             indexKey = Node.retrieveKeyAtLoc(dbAccess, undo, 0);
 
             int tidLoc = Node.keyLengthAtLoc(undo, 0);
-            int tidLen = p_length(undo) - tidLoc;
+            int tidLen = undoEntry.length - tidLoc;
             trashKey = new byte[8 + tidLen];
             encodeLongBE(trashKey, 0, txnId);
             p_copyToArray(undo, tidLoc, trashKey, 8, tidLen);
@@ -180,8 +187,8 @@ final class FragmentedTrash {
         byte[] prefix = new byte[8];
         encodeLongBE(prefix, 0, txnId);
 
-        Database db = mTrash.mDatabase;
-        final Lock sharedCommitLock = db.sharedCommitLock();
+        LocalDatabase db = mTrash.mDatabase;
+        final CommitLock commitLock = db.commitLock();
         TreeCursor cursor = new TreeCursor(mTrash, Transaction.BOGUS);
         try {
             cursor.autoload(false);
@@ -192,13 +199,14 @@ final class FragmentedTrash {
                     break;
                 }
                 cursor.load();
-                /*P*/ byte[] fragmented = p_transfer(cursor.value());
-                sharedCommitLock.lock();
+                byte[] value = cursor.value();
+                /*P*/ byte[] fragmented = p_transfer(value);
+                commitLock.acquireShared();
                 try {
-                    db.deleteFragments(fragmented, 0, p_length(fragmented));
+                    db.deleteFragments(fragmented, 0, value.length);
                     cursor.store(null);
                 } finally {
-                    sharedCommitLock.unlock();
+                    commitLock.releaseShared();
                     p_delete(fragmented);
                 }
                 cursor.next();
@@ -217,8 +225,8 @@ final class FragmentedTrash {
      */
     boolean emptyAllTrash(EventListener listener) throws IOException {
         boolean found = false;
-        Database db = mTrash.mDatabase;
-        final Lock sharedCommitLock = db.sharedCommitLock();
+        LocalDatabase db = mTrash.mDatabase;
+        final CommitLock commitLock = db.commitLock();
         TreeCursor cursor = new TreeCursor(mTrash, Transaction.BOGUS);
         try {
             cursor.first();
@@ -229,14 +237,15 @@ final class FragmentedTrash {
                 }
                 found = true;
                 do {
-                    /*P*/ byte[] fragmented = p_transfer(cursor.value());
+                    byte[] value = cursor.value();
+                    /*P*/ byte[] fragmented = p_transfer(value);
                     try {
-                        sharedCommitLock.lock();
+                        commitLock.acquireShared();
                         try {
-                            db.deleteFragments(fragmented, 0, p_length(fragmented));
+                            db.deleteFragments(fragmented, 0, value.length);
                             cursor.store(null);
                         } finally {
-                            sharedCommitLock.unlock();
+                            commitLock.releaseShared();
                         }
                     } finally {
                         p_delete(fragmented);

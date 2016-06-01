@@ -1,5 +1,5 @@
 /*
- *  Copyright 2011-2013 Brian S O'Neill
+ *  Copyright 2011-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -240,6 +240,7 @@ abstract class LHashTable<E extends LHashTable.Entry<E>> {
         E next;
     }
 
+    @FunctionalInterface
     public static interface Visitor<E extends Entry<E>, X extends Exception> {
         /**
          * @return true if entry should be deleted

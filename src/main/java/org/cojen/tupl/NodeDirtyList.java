@@ -1,5 +1,5 @@
 /*
- *  Copyright 2012-2013 Brian S O'Neill
+ *  Copyright 2012-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -18,11 +18,14 @@ package org.cojen.tupl;
 
 import java.io.IOException;
 
+import org.cojen.tupl.util.Latch;
+
 /**
  * List of dirty nodes.
  *
  * @author Brian S O'Neill
  */
+/*P*/
 @SuppressWarnings("serial")
 final class NodeDirtyList extends Latch {
     // Linked list of dirty nodes.
@@ -37,10 +40,14 @@ final class NodeDirtyList extends Latch {
 
     /**
      * Move or add node to the end of the dirty list.
+     *
+     * @param cachedState node cached state to set
      */
-    void add(Node node) {
+    void add(Node node, byte cachedState) {
         acquireExclusive();
         try {
+            node.mCachedState = cachedState;
+
             final Node next = node.mNextDirty;
             final Node prev = node.mPrevDirty;
             if (next != null) {
@@ -63,8 +70,10 @@ final class NodeDirtyList extends Latch {
                     last.mNextDirty = node;
                 }
             }
+
             mLastDirty = node;
-            // See flushNextDirtyNode for explanation for node latch requirement.
+
+            // See flush method for explanation of node latch requirement.
             if (mFlushNext == node) {
                 mFlushNext = next;
             }
@@ -117,22 +126,30 @@ final class NodeDirtyList extends Latch {
         while (true) {
             Node node;
             while (true) {
+                int state;
                 acquireExclusive();
                 try {
                     node = mFlushNext;
                     if (node == null) {
                         return;
                     }
+                    state = node.mCachedState;
                     mFlushNext = node.mNextDirty;
                 } finally {
                     releaseExclusive();
                 }
 
-                node.acquireExclusive();
-                if (node.mCachedState == dirtyState) {
-                    break;
+                if (state == dirtyState) {
+                    node.acquireExclusive();
+                    state = node.mCachedState;
+                    if (state == dirtyState) {
+                        break;
+                    }
+                    node.releaseExclusive();
+                } else if (state != Node.CACHED_CLEAN) {
+                    // Now seeing nodes with new dirty state, so all done flushing.
+                    return;
                 }
-                node.releaseExclusive();
             }
 
             // Remove from list. Because allocPage requires nodes to be latched,
@@ -176,7 +193,7 @@ final class NodeDirtyList extends Latch {
     /**
      * Remove and delete nodes from dirty list, as part of close sequence.
      */
-    void delete() {
+    void delete(LocalDatabase db) {
         acquireExclusive();
         try {
             Node node = mFirstDirty;
@@ -184,7 +201,7 @@ final class NodeDirtyList extends Latch {
             mFirstDirty = null;
             mLastDirty = null;
             while (node != null) {
-                node.delete();
+                node.delete(db);
                 Node next = node.mNextDirty;
                 node.mPrevDirty = null;
                 node.mNextDirty = null;

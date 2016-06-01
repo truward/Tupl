@@ -1,7 +1,62 @@
 Changelog
 =========
 
-v1.2.7
+v1.3.2
+------
+* Fix storage leak when database capacity is reached during fragmented value allocation.
+* Fix deadlock when gathering stats while trees are concurrently closed.
+* Optimize count method, utilizing stored internal node counts.
+* Add file I/O support for ByteBuffers.
+
+v1.3.1 (2016-05-07)
+------
+* Fix handling of invalidated transactions, and defined a new exception type for it.
+* Fix root node initialization for new trees when using fully mapped mode.
+* Fix various replication issues.
+* Fix race conditions when closing database.
+* Prevent improper use of bogus transaction.
+
+v1.3.0.1 (2016-04-16)
+--------
+* Fix for Index.load during concurrent node splits. It caused the load to falsely return null.
+* Fix undo log node creation when using direct page access mode. The reserved byte was not
+  explicitly cleared, allowing fragmented values to corrupt the nodes as pages get recycled.
+* Fix shared latch double release when using VARIANT_RETAIN, which would result in a
+  deadlock. This affected the Cursor.findGe and Cursor.findLe methods.
+* Fix handling of Index.evict when encountering empty nodes, and lock keys as required by the
+  transaction.
+* Fix handling of index delete and recovery. Deleted index must be closed just like they were
+  before recovery, to allow recovery to complete.
+* Fix for deleting empty indexes which caused an exception.
+* Eliminate overhead of zero-length memory copy when using direct page access mode. This
+  primarily affected the performance of values larger than the page size.
+* Allow node merge to propagate upwards for empty nodes.
+* Ensure that compaction and verification visit all nodes, even empty ones.
+
+v1.3.0 (2016-04-02)
+------
+* Depends on Java 8.
+* Several top-level classes are now interfaces.
+* Tree search operations rely extensively on shared latches instead of exclusive latches,
+  improving concurrency.
+* Fix cursor race condition which allowed split nodes to be modified too soon, leading to
+  database corruption.
+* Fix deadlock when closing database.
+* Fix handling of mapped file shrinkage on Windows.
+* More fixes for random search and add improve safety of frame binding.
+* Added method to analyze index size.
+* Added capacity limit feature.
+* Added fully mapped mode when using direct page access and MappedPageArray.
+* Added method to evict records from an Index.
+* File sync improvements for Linux and MacOS. Performs directory sync'ng and F_FULLSYNC.
+* Use JNA to access native I/O functions, eliminating extra system calls.
+* Make Latch class a public utility.
+
+v1.2.7.1 (2015-12-22)
+--------
+* Fix defect in cursor skip which might operate against an unlatched node.
+
+v1.2.7 (2015-10-04)
 ------
 * Fixed reverse view range handling.
 * Fixed compareKeyTo methods for transformed and trimmed views.

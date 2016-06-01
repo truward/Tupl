@@ -1,5 +1,5 @@
 /*
- *  Copyright 2011-2013 Brian S O'Neill
+ *  Copyright 2011-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,12 +35,14 @@ import java.nio.channels.FileChannel;
 import java.security.GeneralSecurityException;
 
 import org.cojen.tupl.io.FileFactory;
+import org.cojen.tupl.io.FileIO;
 
 /**
  * 
  *
  * @author Brian S O'Neill
  */
+/*P*/
 final class RedoLog extends RedoWriter {
     private static final long MAGIC_NUMBER = 431399725605778814L;
     private static final int ENCODING_VERSION = 20130106;
@@ -169,7 +171,7 @@ final class RedoLog extends RedoWriter {
 
                 if (!finished) {
                     // Last log file was truncated, so chuck the rest.
-                    Utils.deleteNumberedFiles(mBaseFile, Database.REDO_FILE_SUFFIX, mLogId);
+                    Utils.deleteNumberedFiles(mBaseFile, LocalDatabase.REDO_FILE_SUFFIX, mLogId);
                     break;
                 }
             }
@@ -225,6 +227,9 @@ final class RedoLog extends RedoWriter {
             }
 
             nextOut.write(header);
+
+            // Make sure that parent directory durably records the new log file.
+            FileIO.dirSync(file);
         } catch (IOException e) {
             Utils.closeQuietly(null, fout);
             file.delete();
@@ -363,6 +368,11 @@ final class RedoLog extends RedoWriter {
 
         Utils.closeQuietly(null, mOldOut);
         */
+    }
+
+    @Override
+    void checkpointFlushed() throws IOException {
+        // Nothing to do.
     }
 
     @Override

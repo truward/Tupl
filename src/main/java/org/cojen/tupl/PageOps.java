@@ -1,5 +1,5 @@
 /*
- *  Copyright 2015 Brian S O'Neill
+ *  Copyright 2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -20,11 +20,7 @@ import java.io.IOException;
 
 import java.nio.ByteBuffer;
 
-import java.security.GeneralSecurityException;
-
 import java.util.zip.CRC32;
-
-import javax.crypto.Cipher;
 
 import static org.cojen.tupl.Utils.*;
 
@@ -49,20 +45,22 @@ final class PageOps {
      */
     static final int NODE_OVERHEAD = 100;
 
-    private static final byte[] EMPTY_TREE_PAGE;
+    private static final byte[] CLOSED_TREE_PAGE;
 
     static {
-        byte[] empty = new byte[Node.TN_HEADER_SIZE];
+        byte[] closed = new byte[Node.TN_HEADER_SIZE];
 
-        empty[0] = Node.TYPE_TN_LEAF | Node.LOW_EXTREMITY | Node.HIGH_EXTREMITY;
+        closed[0] = Node.TYPE_TN_LEAF | Node.LOW_EXTREMITY | Node.HIGH_EXTREMITY;
 
         // Set fields such that binary search returns ~0 and availableBytes returns 0.
 
-        p_shortPutLE(empty, 4, 2); // leftSegTail
-        p_shortPutLE(empty, 6, 1); // rightSegTail
-        p_shortPutLE(empty, 8, 2); // searchVecStart
+        // Note: Same as Node.clearEntries.
+        p_shortPutLE(closed, 4,  Node.TN_HEADER_SIZE);     // leftSegTail
+        p_shortPutLE(closed, 6,  Node.TN_HEADER_SIZE - 1); // rightSegTail
+        p_shortPutLE(closed, 8,  Node.TN_HEADER_SIZE);     // searchVecStart
+        p_shortPutLE(closed, 10, Node.TN_HEADER_SIZE - 2); // searchVecEnd
 
-        EMPTY_TREE_PAGE = empty;
+        CLOSED_TREE_PAGE = closed;
     }
 
     static /*P*/ byte[] p_null() {
@@ -70,11 +68,11 @@ final class PageOps {
     }
 
     /**
-     * Returned page is 12 bytes, defining and empty tree leaf node. Contents must not be
+     * Returned page is 12 bytes, defining a closed tree leaf node. Contents must not be
      * modified.
      */
-    static /*P*/ byte[] p_emptyTreePage() {
-        return EMPTY_TREE_PAGE;
+    static /*P*/ byte[] p_closedTreePage() {
+        return CLOSED_TREE_PAGE;
     }
 
     static /*P*/ byte[] p_alloc(int size) {
@@ -92,7 +90,37 @@ final class PageOps {
     static void p_delete(/*P*/ byte[] page) {
     }
 
-    static /*P*/ byte[] p_clone(/*P*/ byte[] page) {
+    /**
+     * Allocates an "arena", which contains a fixed number of pages. Pages in an arena cannot
+     * be deleted, and calling p_delete on arena pages does nothing. Call p_arenaDelete to
+     * fully delete the entire arena when not used anymore.
+     *
+     * @return null if not supported
+     */
+    static Object p_arenaAlloc(int pageSize, long pageCount) throws IOException {
+        return null;
+    }
+
+    /**
+     * @throws IllegalArgumentException if unknown arena
+     */
+    static void p_arenaDelete(Object arena) throws IOException {
+        if (arena != null) {
+            throw new IllegalArgumentException();
+        }
+    }
+
+    /**
+     * Allocate a zero-filled page from an arena. If arena is null or depleted, then a regular
+     * page is allocated.
+     *
+     * @throws IllegalArgumentException if unknown arena or if page size doesn't match
+     */
+    static /*P*/ byte[] p_calloc(Object arena, int size) {
+        return p_calloc(size);
+    }
+
+    static /*P*/ byte[] p_clone(/*P*/ byte[] page, int length) {
         return page.clone();
     }
 
@@ -112,10 +140,6 @@ final class PageOps {
      */
     static /*P*/ byte[] p_transferTo(byte[] array, /*P*/ byte[] page) {
         return array;
-    }
-
-    static int p_length(/*P*/ byte[] page) {
-        return page.length;
     }
 
     static byte p_byteGet(/*P*/ byte[] page, int index) {
@@ -196,10 +220,6 @@ final class PageOps {
 
     static int p_ulongVarSize(long v) {
         return calcUnsignedVarLongLength(v);
-    }
-
-    static void p_clear(/*P*/ byte[] page) {
-        java.util.Arrays.fill(page, (byte) 0);
     }
 
     static void p_clear(/*P*/ byte[] page, int fromIndex, int toIndex) {
@@ -308,23 +328,5 @@ final class PageOps {
         CRC32 crc = new CRC32();
         crc.update(srcPage, srcStart, len);
         return (int) crc.getValue();
-    }
-
-    static int p_cipherDoFinal(Cipher cipher,
-                               /*P*/ byte[] srcPage, int srcStart, int srcLen,
-                               /*P*/ byte[] dstPage, int dstStart)
-        throws GeneralSecurityException
-    {
-        return cipher.doFinal(srcPage, srcStart, srcLen, dstPage, dstStart);
-    }
-
-    /**
-     * Not very low-level, but this is much simpler.
-     */
-    static void p_undoPush(UndoLog undo, long indexId, byte op,
-                           /*P*/ byte[] payload, int off, int len)
-        throws IOException
-    {
-        undo.push(indexId, op, payload, off, len);
     }
 }

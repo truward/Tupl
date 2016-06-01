@@ -1,5 +1,5 @@
 /*
- *  Copyright 2014 Brian S O'Neill
+ *  Copyright 2014-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * @author Brian S O'Neill
  */
 final class PartitionedPageCache implements PageCache {
-    private final DirectPageCache[] mPartitions;
+    private final PageCache[] mPartitions;
     private final long mPartitionShift;
     private final long mCapacity;
     private final long mMaxEntryCount;
@@ -53,13 +53,13 @@ final class PartitionedPageCache implements PageCache {
 
         for (int i=0; i<pcount; i++) {
             int pcapacity = (int) (((long) ((i + 1) * psize)) - capacity);
-            int pentryCount = DirectPageCache.entryCountFor(pcapacity, pageSize);
-            pcapacities[i] = DirectPageCache.capacityFor(pentryCount, pageSize);
+            int pentryCount = BasicPageCache.entryCountFor(pcapacity, pageSize);
+            pcapacities[i] = BasicPageCache.capacityFor(pentryCount, pageSize);
             capacity += pcapacities[i];
             maxEntryCount += pentryCount;
         }
 
-        mPartitions = new DirectPageCache[pcount];
+        mPartitions = new PageCache[pcount];
         mPartitionShift = Long.numberOfLeadingZeros(pcount - 1);
         mCapacity = capacity;
         mMaxEntryCount = maxEntryCount;
@@ -69,7 +69,7 @@ final class PartitionedPageCache implements PageCache {
         try {
             if (capacity <= 0x1_000_000L || procCount <= 1) {
                 for (int i=pcount; --i>=0; ) {
-                    mPartitions[i] = new DirectPageCache(pcapacities[i], pageSize);
+                    mPartitions[i] = new BasicPageCache(pcapacities[i], pageSize);
                 }
             } else {
                 // Initializing the buffers takes a long time, so do in parallel.
@@ -89,7 +89,7 @@ final class PartitionedPageCache implements PageCache {
                                 if (!slot.compareAndSet(i, --i)) {
                                     continue;
                                 }
-                                mPartitions[i] = new DirectPageCache(pcapacities[i], pageSize);
+                                mPartitions[i] = new BasicPageCache(pcapacities[i], pageSize);
                             }
                         } catch (Throwable e) {
                             mEx = e;
@@ -134,24 +134,45 @@ final class PartitionedPageCache implements PageCache {
     }
 
     @Override
-    public boolean add(long pageId, /*P*/ byte[] page, int offset, int length, boolean canEvict) {
+    public boolean add(long pageId, byte[] page, int offset, boolean canEvict) {
         pageId = Utils.scramble(pageId);
         return mPartitions[(int) (pageId >>> mPartitionShift)]
-            .add(pageId, page, offset, length, canEvict);
+            .add(pageId, page, offset, canEvict);
     }
 
     @Override
-    public boolean copy(long pageId, int start, /*P*/ byte[] page, int offset, int length) {
+    public boolean add(long pageId, long pagePtr, int offset, boolean canEvict) {
         pageId = Utils.scramble(pageId);
         return mPartitions[(int) (pageId >>> mPartitionShift)]
-            .copy(pageId, start, page, offset, length);
+            .add(pageId, pagePtr, offset, canEvict);
     }
 
     @Override
-    public boolean remove(long pageId, /*P*/ byte[] page, int offset, int length) {
+    public boolean copy(long pageId, int start, byte[] page, int offset) {
+        pageId = Utils.scramble(pageId);
+        return mPartitions[(int) (pageId >>> mPartitionShift)]
+            .copy(pageId, start, page, offset);
+    }
+
+    @Override
+    public boolean copy(long pageId, int start, long pagePtr, int offset) {
+        pageId = Utils.scramble(pageId);
+        return mPartitions[(int) (pageId >>> mPartitionShift)]
+            .copy(pageId, start, pagePtr, offset);
+    }
+
+    @Override
+    public boolean remove(long pageId, byte[] page, int offset, int length) {
         pageId = Utils.scramble(pageId);
         return mPartitions[(int) (pageId >>> mPartitionShift)]
             .remove(pageId, page, offset, length);
+    }
+
+    @Override
+    public boolean remove(long pageId, long pagePtr, int offset, int length) {
+        pageId = Utils.scramble(pageId);
+        return mPartitions[(int) (pageId >>> mPartitionShift)]
+            .remove(pageId, pagePtr, offset, length);
     }
 
     @Override
@@ -166,7 +187,7 @@ final class PartitionedPageCache implements PageCache {
 
     @Override
     public void close() {
-        for (DirectPageCache cache : mPartitions) {
+        for (PageCache cache : mPartitions) {
             if (cache != null) {
                 cache.close();
             }

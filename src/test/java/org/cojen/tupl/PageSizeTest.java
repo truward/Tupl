@@ -1,5 +1,5 @@
 /*
- *  Copyright 2013 Brian S O'Neill
+ *  Copyright 2013-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,11 @@ public class PageSizeTest {
         org.junit.runner.JUnitCore.main(PageSizeTest.class.getName());
     }
 
+    protected DatabaseConfig decorate(DatabaseConfig config) throws Exception {
+        config.directPageAccess(false);
+        return config;
+    }
+
     @After
     public void teardown() throws Exception {
         deleteTempDatabases();
@@ -42,6 +47,7 @@ public class PageSizeTest {
     public void nonStandardPageSize() throws Exception {
         DatabaseConfig config = new DatabaseConfig()
             .pageSize(512).durabilityMode(DurabilityMode.NO_FLUSH);
+        config = decorate(config);
 
         Database db = newTempDatabase(config);
         assertEquals(512, db.stats().pageSize());
@@ -49,13 +55,17 @@ public class PageSizeTest {
 
         // Page size not explicitly set, so use existing page size.
         config = new DatabaseConfig().durabilityMode(DurabilityMode.NO_FLUSH);
+        config = decorate(config);
 
         db = reopenTempDatabase(db, config);
         assertEquals(512, db.stats().pageSize());
         db.shutdown();
 
         config = new DatabaseConfig()
-            .pageSize(4096).durabilityMode(DurabilityMode.NO_FLUSH);
+            .eventListener((type, message, args) -> {}) // hide uncaught exception
+            .pageSize(4096)
+            .durabilityMode(DurabilityMode.NO_FLUSH);
+        config = decorate(config);
 
         try {
             db = reopenTempDatabase(db, config);
@@ -69,6 +79,7 @@ public class PageSizeTest {
     public void restore() throws Exception {
         DatabaseConfig config = new DatabaseConfig()
             .pageSize(512).durabilityMode(DurabilityMode.NO_FLUSH);
+        config = decorate(config);
 
         Database db = newTempDatabase(config);
         assertEquals(512, db.stats().pageSize());
@@ -82,6 +93,7 @@ public class PageSizeTest {
         config = new DatabaseConfig()
             .baseFile(baseFileForTempDatabase(db))
             .durabilityMode(DurabilityMode.NO_FLUSH);
+        config = decorate(config);
 
         ByteArrayInputStream in = new ByteArrayInputStream(out.toByteArray());
         db = Database.restoreFromSnapshot(config, in);

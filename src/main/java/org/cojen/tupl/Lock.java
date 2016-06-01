@@ -1,5 +1,5 @@
 /*
- *  Copyright 2011-2013 Brian S O'Neill
+ *  Copyright 2011-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -18,6 +18,9 @@ package org.cojen.tupl;
 
 import java.util.Arrays;
 
+import org.cojen.tupl.util.Latch;
+import org.cojen.tupl.util.LatchCondition;
+
 import static org.cojen.tupl.LockResult.*;
 
 /**
@@ -29,6 +32,7 @@ import static org.cojen.tupl.LockResult.*;
  * @author Brian S O'Neill
  * @see LockManager
  */
+/*P*/
 final class Lock {
     long mIndexId;
     byte[] mKey;
@@ -51,11 +55,11 @@ final class Lock {
     // union type would be handy. Object is a Tree if entry is ghosted.
     Object mSharedLockOwnersObj;
 
-    // Waiters for upgradable lock. Contains only WaitQueue.Node instances.
-    WaitQueue mQueueU;
+    // Waiters for upgradable lock. Contains only regular waiters.
+    LatchCondition mQueueU;
 
-    // Waiters for shared and exclusive locks. Contains WaitQueue.Node and Shared instances.
-    WaitQueue mQueueSX;
+    // Waiters for shared and exclusive locks. Contains regular and shared waiters.
+    LatchCondition mQueueSX;
 
     /**
      * @param locker optional locker
@@ -90,7 +94,7 @@ final class Lock {
             return mLockCount == ~0 ? OWNED_EXCLUSIVE : OWNED_UPGRADABLE;
         }
 
-        WaitQueue queueSX = mQueueSX;
+        LatchCondition queueSX = mQueueSX;
         if (queueSX != null) {
             if (nanosTimeout == 0) {
                 return TIMED_OUT_LOCK;
@@ -103,7 +107,7 @@ final class Lock {
             if (nanosTimeout == 0) {
                 return TIMED_OUT_LOCK;
             }
-            mQueueSX = queueSX = new WaitQueue();
+            mQueueSX = queueSX = new LatchCondition();
         }
 
         locker.mWaitingFor = this;
@@ -111,7 +115,7 @@ final class Lock {
 
         while (true) {
             // Await for shared lock.
-            int w = queueSX.await(latch, new WaitQueue.Shared(), nanosTimeout, nanosEnd);
+            int w = queueSX.awaitShared(latch, nanosTimeout, nanosEnd);
             queueSX = mQueueSX;
 
             // After consuming one signal, next shared waiter must be signaled, and so on.
@@ -150,7 +154,7 @@ final class Lock {
             }
 
             if (mQueueSX == null) {
-                mQueueSX = queueSX = new WaitQueue();
+                mQueueSX = queueSX = new LatchCondition();
             }
         }
     }
@@ -182,7 +186,7 @@ final class Lock {
             }
         }
 
-        WaitQueue queueU = mQueueU;
+        LatchCondition queueU = mQueueU;
         if (queueU != null) {
             if (nanosTimeout == 0) {
                 return TIMED_OUT_LOCK;
@@ -196,7 +200,7 @@ final class Lock {
             if (nanosTimeout == 0) {
                 return TIMED_OUT_LOCK;
             }
-            mQueueU = queueU = new WaitQueue();
+            mQueueU = queueU = new LatchCondition();
         }
 
         locker.mWaitingFor = this;
@@ -204,7 +208,7 @@ final class Lock {
 
         while (true) {
             // Await for exclusive lock.
-            int w = queueU.await(latch, new WaitQueue.Node(), nanosTimeout, nanosEnd);
+            int w = queueU.await(latch, nanosTimeout, nanosEnd);
             queueU = mQueueU;
 
             if (queueU != null && queueU.isEmpty()) {
@@ -262,7 +266,7 @@ final class Lock {
             }
 
             if (mQueueU == null) {
-                mQueueU = queueU = new WaitQueue();
+                mQueueU = queueU = new LatchCondition();
             }
         }
     }
@@ -281,7 +285,7 @@ final class Lock {
             return ur;
         }
 
-        WaitQueue queueSX = mQueueSX;
+        LatchCondition queueSX = mQueueSX;
         if (queueSX != null) {
             if (nanosTimeout == 0) {
                 if (ur == ACQUIRED) {
@@ -300,7 +304,7 @@ final class Lock {
                 }
                 return TIMED_OUT_LOCK;
             }
-            mQueueSX = queueSX = new WaitQueue();
+            mQueueSX = queueSX = new LatchCondition();
         }
 
         locker.mWaitingFor = this;
@@ -308,7 +312,7 @@ final class Lock {
 
         while (true) {
             // Await for exclusive lock.
-            int w = queueSX.await(latch, new WaitQueue.Node(), nanosTimeout, nanosEnd);
+            int w = queueSX.await(latch, nanosTimeout, nanosEnd);
             queueSX = mQueueSX;
 
             if (queueSX != null && queueSX.isEmpty()) {
@@ -349,7 +353,7 @@ final class Lock {
             }
 
             if (mQueueSX == null) {
-                mQueueSX = queueSX = new WaitQueue();
+                mQueueSX = queueSX = new LatchCondition();
             }
         }
     }
@@ -361,7 +365,7 @@ final class Lock {
      */
     private void unlockUpgradable() {
         mOwner = null;
-        WaitQueue queueU = mQueueU;
+        LatchCondition queueU = mQueueU;
         if (queueU != null) {
             // Signal at most one upgradable lock waiter.
             queueU.signal();
@@ -380,7 +384,7 @@ final class Lock {
         if (mOwner == locker) {
             deleteGhost(latch);
             mOwner = null;
-            WaitQueue queueU = mQueueU;
+            LatchCondition queueU = mQueueU;
             if (queueU != null) {
                 // Signal at most one upgradable lock waiter.
                 queueU.signal();
@@ -393,7 +397,7 @@ final class Lock {
             } else {
                 // Unlocking exclusive lock.
                 mLockCount = 0;
-                WaitQueue queueSX = mQueueSX;
+                LatchCondition queueSX = mQueueSX;
                 if (queueSX == null) {
                     return queueU == null;
                 } else {
@@ -429,7 +433,7 @@ final class Lock {
 
             mLockCount = --count;
 
-            WaitQueue queueSX = mQueueSX;
+            LatchCondition queueSX = mQueueSX;
             if (count == 0x80000000) {
                 if (queueSX != null) {
                     // Signal any exclusive lock waiter. Queue shouldn't contain
@@ -454,7 +458,7 @@ final class Lock {
         if (mOwner == locker) {
             deleteGhost(latch);
             mOwner = null;
-            WaitQueue queueU = mQueueU;
+            LatchCondition queueU = mQueueU;
             if (queueU != null) {
                 // Signal at most one upgradable lock waiter.
                 queueU.signal();
@@ -471,7 +475,7 @@ final class Lock {
             } else {
                 // Unlocking exclusive lock into shared.
                 addSharedLockOwner(0, locker);
-                WaitQueue queueSX = mQueueSX;
+                LatchCondition queueSX = mQueueSX;
                 if (queueSX != null) {
                     // Signal first shared lock waiter. Queue doesn't contain
                     // any exclusive lock waiters, because they would need to
@@ -504,7 +508,7 @@ final class Lock {
         }
         deleteGhost(latch);
         mLockCount = 0x80000000;
-        WaitQueue queueSX = mQueueSX;
+        LatchCondition queueSX = mQueueSX;
         if (queueSX != null) {
             queueSX.signalShared();
         }

@@ -1,5 +1,5 @@
 /*
- *  Copyright 2011-2013 Brian S O'Neill
+ *  Copyright 2011-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -21,7 +21,6 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.BitSet;
 
-import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 import org.cojen.tupl.io.PageArray;
@@ -82,6 +81,7 @@ final class PageQueue implements IntegerRef {
     private static final int I_NODE_START    = I_FIRST_PAGE_ID + 8;
 
     private final PageManager mManager;
+    private final int mPageSize;
     private final int mAllocMode;
     private final boolean mAggressive;
 
@@ -139,12 +139,14 @@ final class PageQueue implements IntegerRef {
     private PageQueue(PageManager manager, int allocMode, boolean aggressive,
                       ReentrantLock appendLock)
     {
-        mManager = manager;
-        mAllocMode = allocMode;
-        mAggressive = aggressive;
         PageArray array = manager.pageArray();
 
-        mRemoveHead = p_calloc(array.pageSize());
+        mManager = manager;
+        mPageSize = array.pageSize();
+        mAllocMode = allocMode;
+        mAggressive = aggressive;
+
+        mRemoveHead = p_calloc(mPageSize);
 
         if (appendLock == null) {
             // This lock must be reentrant. The appendPage method can call into
@@ -158,8 +160,8 @@ final class PageQueue implements IntegerRef {
             mAppendLock = appendLock;
         }
 
-        mAppendHeap = new IdHeap(array.pageSize() - I_NODE_START);
-        mAppendTail = p_calloc(array.pageSize());
+        mAppendHeap = new IdHeap(mPageSize - I_NODE_START);
+        mAppendTail = p_calloc(mPageSize);
     }
 
     /**
@@ -227,7 +229,7 @@ final class PageQueue implements IntegerRef {
      *
      * @param upperBound inclusive; pages greater than the upper bound are discarded
      */
-    void reclaim(Lock removeLock, long upperBound) throws IOException {
+    void reclaim(ReentrantLock removeLock, long upperBound) throws IOException {
         if (mAllocMode != ALLOC_RESERVE) {
             throw new IllegalStateException();
         }
@@ -271,7 +273,7 @@ final class PageQueue implements IntegerRef {
      * @param lock lock to be released by this method, unless return value is 0
      * @return 0 if queue is empty or if remaining pages are off limits
      */
-    long tryRemove(Lock lock) throws IOException {
+    long tryRemove(ReentrantLock lock) throws IOException {
         if (mRemoveHeadId == 0) {
             if (!mAggressive || mRemoveStoppedId == mAppendTailId) {
                 return 0;
@@ -295,7 +297,7 @@ final class PageQueue implements IntegerRef {
             mRemovePageCount--;
 
             final /*P*/ byte[] head = mRemoveHead;
-            if (mRemoveHeadOffset < p_length(head)) {
+            if (mRemoveHeadOffset < pageSize(head)) {
                 // Pass this as an IntegerRef to mRemoveHeadOffset.
                 long delta = p_ulongGetVar(head, this);
                 if (delta > 0) {
@@ -431,10 +433,10 @@ final class PageQueue implements IntegerRef {
             int end = appendHeap.drain(firstPageId,
                                        tailBuf,
                                        I_NODE_START,
-                                       p_length(tailBuf) - I_NODE_START);
+                                       pageSize(tailBuf) - I_NODE_START);
 
             // Clean out any cruft from previous usage and ensure delta terminator.
-            p_clear(tailBuf, end, p_length(tailBuf));
+            p_clear(tailBuf, end, pageSize(tailBuf));
 
             try {
                 mManager.pageArray().writePage(mAppendTailId, tailBuf);
@@ -451,7 +453,7 @@ final class PageQueue implements IntegerRef {
         }
     }
 
-    Lock appendLock() {
+    ReentrantLock appendLock() {
         return mAppendLock;
     }
 
@@ -557,7 +559,7 @@ final class PageQueue implements IntegerRef {
         long nodeId = mRemoveHeadId;
 
         if (nodeId != 0) {
-            /*P*/ byte[] node = p_clone(mRemoveHead);
+            /*P*/ byte[] node = p_clone(mRemoveHead, pageSize(mRemoveHead));
             try {
                 long pageId = mRemoveHeadFirstPageId;
                 IntegerRef.Value nodeOffsetRef = new IntegerRef.Value();
@@ -572,7 +574,7 @@ final class PageQueue implements IntegerRef {
                     hash += scramble(pageId);
                     count++;
 
-                    if (nodeOffsetRef.value < p_length(node)) {
+                    if (nodeOffsetRef.value < pageSize(node)) {
                         long delta = p_ulongGetVar(node, nodeOffsetRef);
                         if (delta > 0) {
                             pageId += delta;
@@ -626,7 +628,7 @@ final class PageQueue implements IntegerRef {
             return count;
         }
 
-        /*P*/ byte[] node = p_clone(mRemoveHead);
+        /*P*/ byte[] node = p_clone(mRemoveHead, pageSize(mRemoveHead));
         try {
             long pageId = mRemoveHeadFirstPageId;
             IntegerRef.Value nodeOffsetRef = new IntegerRef.Value();
@@ -642,7 +644,7 @@ final class PageQueue implements IntegerRef {
                 count++;
                 clearPageBit(pages, pageId);
 
-                if (nodeOffsetRef.value < p_length(node)) {
+                if (nodeOffsetRef.value < pageSize(node)) {
                     long delta = p_ulongGetVar(node, nodeOffsetRef);
                     if (delta > 0) {
                         pageId += delta;
@@ -679,6 +681,14 @@ final class PageQueue implements IntegerRef {
         } else if (index < pages.size()) {
             throw new CorruptDatabaseException("Doubly freed page: " + pageId);
         }
+    }
+
+    private int pageSize(/*P*/ byte[] page) {
+        /*P*/ // [
+        return page.length;
+        /*P*/ // |
+        /*P*/ // return mPageSize;
+        /*P*/ // ]
     }
 
     // Required by IntegerRef.

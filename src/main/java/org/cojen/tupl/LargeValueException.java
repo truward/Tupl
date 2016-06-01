@@ -1,5 +1,5 @@
 /*
- *  Copyright 2012-2013 Brian S O'Neill
+ *  Copyright 2012-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,6 +46,6 @@ public class LargeValueException extends DatabaseException {
     }
 
     private static String createMessage(long length) {
-        return "Value is too large: " + Utils.toUnsignedString(length);
+        return "Value is too large: " + Long.toUnsignedString(length);
     }
 }

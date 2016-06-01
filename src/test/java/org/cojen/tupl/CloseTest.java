@@ -1,5 +1,5 @@
 /*
- *  Copyright 2012-2013 Brian S O'Neill
+ *  Copyright 2012-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -186,10 +186,14 @@ public class CloseTest {
                 fastAssertArrayEquals(("world-" + i).getBytes(),
                                       ix.load(null, "hello".getBytes()));
             }
-            // Cache size is too large for the test.
-            fail();
+            if (expectCacheExhausted()) {
+                // Cache size is too large for the test.
+                fail();
+            }
         } catch (CacheExhaustedException e) {
-            // expected
+            if (expectCacheExhausted()) {
+                // expected
+            }
         }
 
         for (int i=0; i<10000; i++) {
@@ -199,6 +203,10 @@ public class CloseTest {
                                   ix.load(null, "hello".getBytes()));
             ix.close();
         }
+    }
+
+    protected boolean expectCacheExhausted() {
+        return true;
     }
 
     @Test

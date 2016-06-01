@@ -1,5 +1,5 @@
 /*
- *  Copyright 2013 Brian S O'Neill
+ *  Copyright 2013-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import java.io.IOException;
  * @author Brian S O'Neill
  * @see RedoLog
  */
+/*P*/
 final class RedoLogDecoder extends RedoDecoder {
     private final RedoLog mLog;
     private final DataIn mIn;

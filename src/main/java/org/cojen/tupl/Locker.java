@@ -1,5 +1,5 @@
 /*
- *  Copyright 2011-2013 Brian S O'Neill
+ *  Copyright 2011-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ import static org.cojen.tupl.LockManager.*;
  *
  * @author Brian S O'Neill
  */
+/*P*/
 class Locker extends LockOwner {
     final LockManager mManager;
 
@@ -40,6 +41,14 @@ class Locker extends LockOwner {
      */
     Locker(LockManager manager) {
         mManager = manager;
+    }
+
+    private LockManager manager() {
+        LockManager manager = mManager;
+        if (manager == null) {
+            throw new IllegalStateException("Transaction is bogus");
+        }
+        return manager;
     }
 
     /**
@@ -63,6 +72,60 @@ class Locker extends LockOwner {
     }
 
     /**
+     * @param lockType TYPE_SHARED, TYPE_UPGRADABLE, or TYPE_EXCLUSIVE
+     */
+    final LockResult tryLock(int lockType, long indexId, byte[] key, int hash, long nanosTimeout)
+        throws DeadlockException
+    {
+        LockResult result = manager().getLockHT(hash)
+            .tryLock(lockType, this, indexId, key, hash, nanosTimeout);
+        if (result == LockResult.TIMED_OUT_LOCK) {
+            detectDeadlock(nanosTimeout);
+        }
+        return result;
+    }
+
+    /**
+     * @param lockType TYPE_SHARED, TYPE_UPGRADABLE, or TYPE_EXCLUSIVE
+     */
+    final LockResult lock(int lockType, long indexId, byte[] key, int hash, long nanosTimeout)
+        throws LockFailureException
+    {
+        LockResult result = manager().getLockHT(hash)
+            .tryLock(lockType, this, indexId, key, hash, nanosTimeout);
+        if (result.isHeld()) {
+            return result;
+        }
+        throw failed(result, nanosTimeout);
+    }
+
+    /**
+     * NT == No Timeout or deadlock exception thrown
+     *
+     * @param lockType TYPE_SHARED, TYPE_UPGRADABLE, or TYPE_EXCLUSIVE
+     * @return {@link LockResult#TIMED_OUT_LOCK TIMED_OUT_LOCK}, {@link
+     * LockResult#ACQUIRED ACQUIRED}, {@link LockResult#OWNED_SHARED
+     * OWNED_SHARED}, {@link LockResult#OWNED_UPGRADABLE OWNED_UPGRADABLE}, or
+     * {@link LockResult#OWNED_EXCLUSIVE OWNED_EXCLUSIVE}
+     */
+    @SuppressWarnings("incomplete-switch")
+    final LockResult lockNT(int lockType, long indexId, byte[] key, int hash, long nanosTimeout)
+        throws LockFailureException
+    {
+        LockResult result = manager().getLockHT(hash)
+            .tryLock(lockType, this, indexId, key, hash, nanosTimeout);
+        if (!result.isHeld()) {
+            switch (result) {
+            case ILLEGAL:
+                throw new IllegalUpgradeException();
+            case INTERRUPTED:
+                throw new LockInterruptedException();
+            }
+        }
+        return result;
+    }
+
+    /**
      * Attempts to acquire a shared lock for the given key, denying exclusive
      * locks. If return value is {@link LockResult#alreadyOwned owned}, transaction
      * already owns a strong enough lock, and no extra unlock should be
@@ -83,18 +146,13 @@ class Locker extends LockOwner {
     public final LockResult tryLockShared(long indexId, byte[] key, long nanosTimeout)
         throws DeadlockException
     {
-        return tryLockShared(indexId, key, hash(indexId, key), nanosTimeout);
+        return tryLock(TYPE_SHARED, indexId, key, hash(indexId, key), nanosTimeout);
     }
 
     final LockResult tryLockShared(long indexId, byte[] key, int hash, long nanosTimeout)
         throws DeadlockException
     {
-        LockResult result = mManager.getLockHT(hash)
-            .tryLock(TYPE_SHARED, this, indexId, key, hash, nanosTimeout);
-        if (result == LockResult.TIMED_OUT_LOCK) {
-            detectDeadlock(nanosTimeout);
-        }
-        return result;
+        return tryLock(TYPE_SHARED, indexId, key, hash, nanosTimeout);
     }
 
     /**
@@ -118,18 +176,13 @@ class Locker extends LockOwner {
     public final LockResult lockShared(long indexId, byte[] key, long nanosTimeout)
         throws LockFailureException
     {
-        return lockShared(indexId, key, hash(indexId, key), nanosTimeout);
+        return lock(TYPE_SHARED, indexId, key, hash(indexId, key), nanosTimeout);
     }
 
     final LockResult lockShared(long indexId, byte[] key, int hash, long nanosTimeout)
         throws LockFailureException
     {
-        LockResult result = mManager.getLockHT(hash)
-            .tryLock(TYPE_SHARED, this, indexId, key, hash, nanosTimeout);
-        if (result.isHeld()) {
-            return result;
-        }
-        throw failed(result, nanosTimeout);
+        return lock(TYPE_SHARED, indexId, key, hash, nanosTimeout);
     }
 
     /**
@@ -143,9 +196,7 @@ class Locker extends LockOwner {
     final LockResult lockSharedNT(long indexId, byte[] key, int hash, long nanosTimeout)
         throws LockFailureException
     {
-        LockResult result = mManager.getLockHT(hash)
-            .tryLock(TYPE_SHARED, this, indexId, key, hash, nanosTimeout);
-        return result.isHeld() ? result : nt(result, indexId, key, nanosTimeout);
+        return lockNT(TYPE_SHARED, indexId, key, hash, nanosTimeout);
     }
 
     /**
@@ -170,18 +221,13 @@ class Locker extends LockOwner {
     public final LockResult tryLockUpgradable(long indexId, byte[] key, long nanosTimeout)
         throws DeadlockException
     {
-        return tryLockUpgradable(indexId, key, hash(indexId, key), nanosTimeout);
+        return tryLock(TYPE_UPGRADABLE, indexId, key, hash(indexId, key), nanosTimeout);
     }
 
     final LockResult tryLockUpgradable(long indexId, byte[] key, int hash, long nanosTimeout)
         throws DeadlockException
     {
-        LockResult result = mManager.getLockHT(hash)
-            .tryLock(TYPE_UPGRADABLE, this, indexId, key, hash, nanosTimeout);
-        if (result == LockResult.TIMED_OUT_LOCK) {
-            detectDeadlock(nanosTimeout);
-        }
-        return result;
+        return tryLock(TYPE_UPGRADABLE, indexId, key, hash, nanosTimeout);
     }
 
     /**
@@ -203,18 +249,13 @@ class Locker extends LockOwner {
     public final LockResult lockUpgradable(long indexId, byte[] key, long nanosTimeout)
         throws LockFailureException
     {
-        return lockUpgradable(indexId, key, hash(indexId, key), nanosTimeout);
+        return lock(TYPE_UPGRADABLE, indexId, key, hash(indexId, key), nanosTimeout);
     }
 
     final LockResult lockUpgradable(long indexId, byte[] key, int hash, long nanosTimeout)
         throws LockFailureException
     {
-        LockResult result = mManager.getLockHT(hash)
-            .tryLock(TYPE_UPGRADABLE, this, indexId, key, hash, nanosTimeout);
-        if (result.isHeld()) {
-            return result;
-        }
-        throw failed(result, nanosTimeout);
+        return lock(TYPE_UPGRADABLE, indexId, key, hash, nanosTimeout);
     }
 
     /**
@@ -228,9 +269,7 @@ class Locker extends LockOwner {
     final LockResult lockUpgradableNT(long indexId, byte[] key, int hash, long nanosTimeout)
         throws LockFailureException
     {
-        LockResult result = mManager.getLockHT(hash)
-            .tryLock(TYPE_UPGRADABLE, this, indexId, key, hash, nanosTimeout);
-        return result.isHeld() ? result : nt(result, indexId, key, nanosTimeout);
+        return lockNT(TYPE_UPGRADABLE, indexId, key, hash, nanosTimeout);
     }
 
     /**
@@ -254,18 +293,13 @@ class Locker extends LockOwner {
     public final LockResult tryLockExclusive(long indexId, byte[] key, long nanosTimeout)
         throws DeadlockException
     {
-        return tryLockExclusive(indexId, key, hash(indexId, key), nanosTimeout);
+        return tryLock(TYPE_EXCLUSIVE, indexId, key, hash(indexId, key), nanosTimeout);
     }
 
     final LockResult tryLockExclusive(long indexId, byte[] key, int hash, long nanosTimeout)
         throws DeadlockException
     {
-        LockResult result = mManager.getLockHT(hash)
-            .tryLock(TYPE_EXCLUSIVE, this, indexId, key, hash, nanosTimeout);
-        if (result == LockResult.TIMED_OUT_LOCK) {
-            detectDeadlock(nanosTimeout);
-        }
-        return result;
+        return tryLock(TYPE_EXCLUSIVE, indexId, key, hash, nanosTimeout);
     }
 
     /**
@@ -286,22 +320,19 @@ class Locker extends LockOwner {
     public final LockResult lockExclusive(long indexId, byte[] key, long nanosTimeout)
         throws LockFailureException
     {
-        return lockExclusive(indexId, key, hash(indexId, key), nanosTimeout);
+        return lock(TYPE_EXCLUSIVE, indexId, key, hash(indexId, key), nanosTimeout);
     }
 
     final LockResult lockExclusive(long indexId, byte[] key, int hash, long nanosTimeout)
         throws LockFailureException
     {
-        LockResult result = mManager.getLockHT(hash)
-            .tryLock(TYPE_EXCLUSIVE, this, indexId, key, hash, nanosTimeout);
-        if (result.isHeld()) {
-            return result;
-        }
-        throw failed(result, nanosTimeout);
+        return lock(TYPE_EXCLUSIVE, indexId, key, hash, nanosTimeout);
     }
 
     /**
-     * @param newLock Lock instance to insert, unless another already exists. The mIndexId,
+     * Lock acquisition used by recovery.
+     *
+     * @param lock Lock instance to insert, unless another already exists. The mIndexId,
      * mKey, and mHashCode fields must be set.
      */
     final LockResult lockExclusive(Lock lock, long nanosTimeout) throws LockFailureException {
@@ -324,9 +355,7 @@ class Locker extends LockOwner {
     final LockResult lockExclusiveNT(long indexId, byte[] key, int hash, long nanosTimeout)
         throws LockFailureException
     {
-        LockResult result = mManager.getLockHT(hash)
-            .tryLock(TYPE_EXCLUSIVE, this, indexId, key, hash, nanosTimeout);
-        return result.isHeld() ? result : nt(result, indexId, key, nanosTimeout);
+        return lockNT(TYPE_EXCLUSIVE, indexId, key, hash, nanosTimeout);
     }
 
     /**
@@ -335,11 +364,7 @@ class Locker extends LockOwner {
      * @param count current lock count, not zero
      */
     final boolean canAttemptUpgrade(int count) {
-        LockManager manager = mManager;
-        if (manager == null) {
-            return false;
-        }
-        LockUpgradeRule lockUpgradeRule = manager.mDefaultLockUpgradeRule;
+        LockUpgradeRule lockUpgradeRule = mManager.mDefaultLockUpgradeRule;
         return lockUpgradeRule == LockUpgradeRule.UNCHECKED
             | (lockUpgradeRule == LockUpgradeRule.LENIENT & count == 1);
     }
@@ -361,19 +386,6 @@ class Locker extends LockOwner {
         return new LockFailureException();
     }
 
-    @SuppressWarnings("incomplete-switch")
-    private LockResult nt(LockResult result, long indexId, byte[] key, long nanosTimeout)
-        throws LockFailureException
-    {
-        switch (result) {
-        case ILLEGAL:
-            throw new IllegalUpgradeException();
-        case INTERRUPTED:
-            throw new LockInterruptedException();
-        }
-        return result;
-    }
-
     private void detectDeadlock(long nanosTimeout) throws DeadlockException {
         if (mWaitingFor != null) {
             try {
@@ -381,7 +393,7 @@ class Locker extends LockOwner {
                 if (detector.scan()) {
                     throw new DeadlockException(nanosTimeout,
                                                 detector.mGuilty,
-                                                new DeadlockSet(detector.mLocks));
+                                                detector.newDeadlockSet());
                 }
             } finally {
                 mWaitingFor = null;
@@ -400,7 +412,7 @@ class Locker extends LockOwner {
      * LockResult#OWNED_EXCLUSIVE OWNED_EXCLUSIVE}
      */
     public final LockResult lockCheck(long indexId, byte[] key) {
-        return mManager.check(this, indexId, key, hash(indexId, key));
+        return manager().check(this, indexId, key, hash(indexId, key));
     }
 
     /**
@@ -589,21 +601,22 @@ class Locker extends LockOwner {
     /**
      * Transfers all exclusive locks held by this Locker, for the top scope only. All other
      * locks are released.
-     *
-     * @return null if no exclusive locks were held
      */
     final PendingTxn transferExclusive() {
-        PendingTxn pending = null;
+        PendingTxn pending;
 
         Object tailObj = mTailBlock;
         if (tailObj instanceof Lock) {
-            pending = mManager.transferExclusive(this, (Lock) tailObj, pending);
+            pending = mManager.transferExclusive(this, (Lock) tailObj, null);
+        } else if (tailObj == null) {
+            pending = new PendingTxn(null);
         } else {
+            pending = null;
             Block tail = (Block) tailObj;
-            while (tail != null) {
+            do {
                 pending = tail.transferExclusive(this, pending);
                 tail = tail.pop();
-            }
+            } while (tail != null);
         }
 
         mTailBlock = null;
@@ -627,6 +640,16 @@ class Locker extends LockOwner {
     final void scopeExitAll() {
         mParentScope = null;
         scopeUnlockAll();
+        mTailBlock = null;
+    }
+
+    /**
+     * Discards all the locks held by this Locker, and exits all scopes. Calling this prevents
+     * the locks from ever being released -- they leak. Should only be called in response to
+     * some fatal error.
+     */
+    final void discardAllLocks() {
+        mParentScope = null;
         mTailBlock = null;
     }
 

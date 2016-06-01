@@ -1,5 +1,5 @@
 /*
- *  Copyright 2014 Brian S O'Neill
+ *  Copyright 2014-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -18,7 +18,10 @@ package org.cojen.tupl;
 
 import java.io.IOException;
 
+import org.cojen.tupl.util.Latch;
+
 import static org.cojen.tupl.Node.*;
+import static org.cojen.tupl.PageOps.*;
 
 /**
  * List of Nodes, ordered from least to most recently used.
@@ -33,23 +36,31 @@ final class NodeUsageList extends Latch {
     // Don't evict a node when trying to allocate another.
     static final int MODE_NO_EVICT = 2;
 
-    final transient Database mDatabase;
+    final transient LocalDatabase mDatabase;
+    private final int mPageSize;
     private int mMaxSize;
     private int mSize;
     private Node mMostRecentlyUsed;
     private Node mLeastRecentlyUsed;
 
-    NodeUsageList(Database db, int maxSize) {
+    NodeUsageList(LocalDatabase db, int maxSize) {
         mDatabase = db;
+        mPageSize = db.pageSize();
         acquireExclusive();
         mMaxSize = maxSize;
         releaseExclusive();
     }
 
+    int pageSize() {
+        return mPageSize;
+    }
+
     /**
      * Initialize and preallocate a minimum amount of nodes.
+     *
+     * @param arena optional
      */
-    void initialize(int min) throws DatabaseException, OutOfMemoryError {
+    void initialize(Object arena, int min) throws DatabaseException, OutOfMemoryError {
         // Least recently used node must always point to a valid, more recently used node.
         min = Math.max(min, 2);
 
@@ -59,7 +70,7 @@ final class NodeUsageList extends Latch {
                 releaseExclusive();
                 break;
             }
-            doAllocLatchedNode(0).releaseExclusive();
+            doAllocLatchedNode(arena, 0).releaseExclusive();
         }
     }
 
@@ -91,7 +102,8 @@ final class NodeUsageList extends Latch {
                 (trial > 1
                  || mLeastRecentlyUsed == null || mLeastRecentlyUsed.mMoreUsed == null))
             {
-                return doAllocLatchedNode(mode);
+                // Don't allocate from an arena; it's only used for the initial cache sizing.
+                return doAllocLatchedNode(null, mode);
             }
 
             if ((mode & MODE_UNEVICTABLE) != 0
@@ -117,7 +129,7 @@ final class NodeUsageList extends Latch {
                         if (mSize < mMaxSize) {
                             // Grow the cache instead of evicting.
                             node.releaseExclusive();
-                            return doAllocLatchedNode(mode);
+                            return doAllocLatchedNode(null, mode);
                         } else if ((mode & MODE_NO_EVICT) != 0) {
                             node.releaseExclusive();
                             break alloc;
@@ -130,7 +142,7 @@ final class NodeUsageList extends Latch {
 
                     releaseExclusive();
 
-                    if ((node = Node.evict(node, mDatabase)) != null) {
+                    if (node.evict(mDatabase)) {
                         if ((mode & MODE_UNEVICTABLE) != 0) {
                             node.mUsageList.makeUnevictable(node);
                         }
@@ -152,7 +164,7 @@ final class NodeUsageList extends Latch {
                     }
                 } else {
                     try {
-                        if ((node = Node.evict(node, mDatabase)) != null) {
+                        if (node.evict(mDatabase)) {
                             if ((mode & MODE_UNEVICTABLE) != 0) {
                                 NodeUsageList usageList = node.mUsageList;
                                 if (usageList == this) {
@@ -184,14 +196,24 @@ final class NodeUsageList extends Latch {
     /**
      * Caller must acquire latch, which is released by this method.
      *
+     * @param arena optional
      * @param mode MODE_UNEVICTABLE
      */
-    private Node doAllocLatchedNode(int mode) throws DatabaseException {
+    private Node doAllocLatchedNode(Object arena, int mode) throws DatabaseException {
         try {
             mDatabase.checkClosed();
-            Node node = new Node(this, mDatabase.mPageSize);
+
+            /*P*/ byte[] page;
+            /*P*/ // [
+            page = p_calloc(arena, mPageSize);
+            /*P*/ // |
+            /*P*/ // page = mDatabase.mFullyMapped ? p_nonTreePage() : p_calloc(arena, mPageSize);
+            /*P*/ // ]
+
+            Node node = new Node(this, page);
             node.acquireExclusive();
             mSize++;
+
             if ((mode & MODE_UNEVICTABLE) == 0) {
                 if ((node.mLessUsed = mMostRecentlyUsed) == null) {
                     mLeastRecentlyUsed = node;
@@ -200,6 +222,7 @@ final class NodeUsageList extends Latch {
                 }
                 mMostRecentlyUsed = node;
             }
+
             // Return with node latch still held.
             return node;
         } finally {
@@ -291,15 +314,13 @@ final class NodeUsageList extends Latch {
     void makeEvictable(final Node node) {
         acquireExclusive();
         try {
-            if (mMaxSize == 0) {
-                // Closed.
-                return;
+            // Only insert if not closed and if not already in the list. The node latch doesn't
+            // need to be held, and so a concurrent call to the unused method might insert the
+            // node sooner.
+            if (mMaxSize != 0 && node.mMoreUsed == null && node.mLessUsed == null) {
+                (node.mLessUsed = mMostRecentlyUsed).mMoreUsed = node;
+                mMostRecentlyUsed = node;
             }
-            if (node.mMoreUsed != null || node.mLessUsed != null) {
-                throw new IllegalStateException();
-            }
-            (node.mLessUsed = mMostRecentlyUsed).mMoreUsed = node;
-            mMostRecentlyUsed = node;
         } finally {
             releaseExclusive();
         }
@@ -312,15 +333,11 @@ final class NodeUsageList extends Latch {
     void makeEvictableNow(final Node node) {
         acquireExclusive();
         try {
-            if (mMaxSize == 0) {
-                // Closed.
-                return;
+            // See comment in the makeEvictable method.
+            if (mMaxSize != 0 && node.mMoreUsed == null && node.mLessUsed == null) {
+                (node.mMoreUsed = mLeastRecentlyUsed).mLessUsed = node;
+                mLeastRecentlyUsed = node;
             }
-            if (node.mMoreUsed != null || node.mLessUsed != null) {
-                throw new IllegalStateException();
-            }
-            (node.mMoreUsed = mLeastRecentlyUsed).mLessUsed = node;
-            mLeastRecentlyUsed = node;
         } finally {
             releaseExclusive();
         }
@@ -332,11 +349,9 @@ final class NodeUsageList extends Latch {
     void makeUnevictable(final Node node) {
         acquireExclusive();
         try {
-            if (mMaxSize == 0) {
-                // Closed.
-                return;
+            if (mMaxSize != 0) {
+                doMakeUnevictable(node);
             }
-            doMakeUnevictable(node);
         } finally {
             releaseExclusive();
         }
@@ -379,7 +394,7 @@ final class NodeUsageList extends Latch {
                 node.mMoreUsed = null;
 
                 // Free memory and make node appear to be evicted.
-                node.delete();
+                node.delete(mDatabase);
 
                 node = next;
             }

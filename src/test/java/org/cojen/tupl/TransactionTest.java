@@ -1,5 +1,5 @@
 /*
- *  Copyright 2011-2013 Brian S O'Neill
+ *  Copyright 2011-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -522,5 +522,46 @@ public class TransactionTest {
 
             assertNull(ix.load(null, key));
         }
+    }
+
+    @Test
+    public void bogusSettings() throws Exception {
+        final Transaction txn = Transaction.BOGUS;
+
+        // Nothing to commit, so safe.
+        txn.commit();
+
+        try {
+            txn.lockMode(LockMode.UPGRADABLE_READ);
+            fail();
+        } catch (IllegalStateException e) {
+        }
+
+        try {
+            txn.lockTimeout(0, null);
+            fail();
+        } catch (IllegalStateException e) {
+        }
+
+        try {
+            txn.durabilityMode(DurabilityMode.SYNC);
+            fail();
+        } catch (IllegalStateException e) {
+        }
+
+        Index ix = mDb.openIndex("test");
+
+        Cursor c = ix.newCursor(txn);
+        c.find("test".getBytes());
+        // Nothing to commit, so safe.
+        c.commit("value".getBytes());
+
+        try {
+            txn.lockExclusive(ix.getId(), "test".getBytes());
+            fail();
+        } catch (IllegalStateException e) {
+        }
+
+        txn.exit();
     }
 }

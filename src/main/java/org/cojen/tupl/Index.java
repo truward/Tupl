@@ -1,5 +1,5 @@
 /*
- *  Copyright 2011-2013 Brian S O'Neill
+ *  Copyright 2011-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package org.cojen.tupl;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.Serializable;
 
 /**
  * Mapping of keys to values, ordered by key, in lexicographical
@@ -44,206 +45,216 @@ public interface Index extends View, Closeable {
     public String getNameString();
 
     /**
-     * {@inheritDoc}
-     */
-    @Override
-    public Ordering getOrdering();
-
-    /**
-     * {@inheritDoc}
+     * Select a few entries, and delete them from the index. Implementation should attempt to
+     * evict entries which haven't been recently used, but it might select them at random.
      *
-     * @throws IllegalArgumentException {@inheritDoc}
+     * @param txn optional
+     * @param lowKey inclusive lowest key in the evictable range; pass null for open range
+     * @param highKey exclusive highest key in the evictable range; pass null for open range
+     * @param evictionFilter callback which determines which entries are allowed to be evicted;
+     * pass null to evict all selected entries
+     * @param autoload pass true to also load values and pass them to the filter
+     * @return sum of the key and value lengths which were evicted, or 0 if none were evicted
      */
-    @Override
-    public Cursor newCursor(Transaction txn);
-
-    /**
-     * {@inheritDoc}
-     *
-     * @throws NullPointerException {@inheritDoc}
-     * @throws IllegalArgumentException {@inheritDoc}
-     */
-    @Override
-    public byte[] load(Transaction txn, byte[] key) throws IOException;
-
-    /**
-     * {@inheritDoc}
-     *
-     * @throws NullPointerException {@inheritDoc}
-     * @throws IllegalArgumentException {@inheritDoc}
-     */
-    @Override
-    public void store(Transaction txn, byte[] key, byte[] value) throws IOException;
-
-    /**
-     * {@inheritDoc}
-     *
-     * @throws NullPointerException {@inheritDoc}
-     * @throws IllegalArgumentException {@inheritDoc}
-     */
-    @Override
-    public byte[] exchange(Transaction txn, byte[] key, byte[] value) throws IOException;
-
-    /**
-     * {@inheritDoc}
-     *
-     * @throws NullPointerException {@inheritDoc}
-     * @throws IllegalArgumentException {@inheritDoc}
-     */
-    @Override
-    public boolean insert(Transaction txn, byte[] key, byte[] value) throws IOException;
-
-    /**
-     * {@inheritDoc}
-     *
-     * @throws NullPointerException {@inheritDoc}
-     * @throws IllegalArgumentException {@inheritDoc}
-     */
-    @Override
-    public boolean replace(Transaction txn, byte[] key, byte[] value) throws IOException;
-
-    /**
-     * {@inheritDoc}
-     *
-     * @throws NullPointerException {@inheritDoc}
-     * @throws IllegalArgumentException {@inheritDoc}
-     */
-    @Override
-    public boolean update(Transaction txn, byte[] key, byte[] oldValue, byte[] newValue)
+    public long evict(Transaction txn, byte[] lowKey, byte[] highKey,
+                      Filter evictionFilter, boolean autoload)
         throws IOException;
 
     /**
-     * {@inheritDoc}
+     * Estimates the size of this index with a single random probe. To improve the estimate,
+     * average several analysis results together.
      *
-     * @throws NullPointerException {@inheritDoc}
-     * @throws IllegalArgumentException {@inheritDoc}
+     * @param lowKey inclusive lowest key in the analysis range; pass null for open range
+     * @param highKey exclusive highest key in the analysis range; pass null for open range
      */
-    @Override
-    public boolean delete(Transaction txn, byte[] key) throws IOException;
+    public abstract Stats analyze(byte[] lowKey, byte[] highKey) throws IOException;
 
     /**
-     * {@inheritDoc}
-     *
-     * @throws NullPointerException {@inheritDoc}
-     * @throws IllegalArgumentException {@inheritDoc}
+     * Collection of stats from the {@link Index#analyze analyze} method.
      */
-    @Override
-    public boolean remove(Transaction txn, byte[] key, byte[] value) throws IOException;
+    public static class Stats implements Cloneable, Serializable {
+        private static final long serialVersionUID = 3L;
 
-    /**
-     * {@inheritDoc}
-     *
-     * @throws IllegalStateException {@inheritDoc}
-     * @throws LockFailureException {@inheritDoc} 
-     * @throws DeadlockException {@inheritDoc}
-     * @throws ViewConstraintException {@inheritDoc}
-     */
-    @Override
-    public LockResult lockShared(Transaction txn, byte[] key)
-        throws LockFailureException, ViewConstraintException;
+        public double entryCount;
+        public double keyBytes;
+        public double valueBytes;
+        public double freeBytes;
+        public double totalBytes;
 
-    /**
-     * {@inheritDoc}
-     *
-     * @throws LockFailureException {@inheritDoc}
-     * @throws DeadlockException {@inheritDoc}
-     * @throws ViewConstraintException {@inheritDoc}
-     */
-    @Override
-    public LockResult lockUpgradable(Transaction txn, byte[] key)
-        throws LockFailureException, ViewConstraintException;
+        public Stats(double entryCount,
+                     double keyBytes,
+                     double valueBytes,
+                     double freeBytes,
+                     double totalBytes)
+        {
+            this.entryCount = entryCount;
+            this.keyBytes = keyBytes;
+            this.valueBytes = valueBytes;
+            this.freeBytes = freeBytes;
+            this.totalBytes = totalBytes;
+        } 
 
-    /**
-     * {@inheritDoc}
-     *
-     * @throws LockFailureException {@inheritDoc}
-     * @throws DeadlockException {@inheritDoc}
-     * @throws ViewConstraintException {@inheritDoc}
-     */
-    @Override
-    public LockResult lockExclusive(Transaction txn, byte[] key)
-        throws LockFailureException, ViewConstraintException;
+        /**
+         * Returns the estimated number of index entries.
+         */
+        public double entryCount() {
+            return entryCount;
+        }
 
-    /**
-     * {@inheritDoc}
-     *
-     * @throws ViewConstraintException {@inheritDoc}
-     */
-    @Override
-    public LockResult lockCheck(Transaction txn, byte[] key) throws ViewConstraintException;
+        /**
+         * Returns the estimated amount of bytes occupied by keys in the index.
+         */
+        public double keyBytes() {
+            return keyBytes;
+        }
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public Stream newStream();
+        /**
+         * Returns the estimated amount of bytes occupied by values in the index.
+         */
+        public double valueBytes() {
+            return valueBytes;
+        }
 
-    /**
-     * {@inheritDoc}
-     *
-     * @throws NullPointerException {@inheritDoc}
-     */
-    @Override
-    public View viewGe(byte[] key);
+        /**
+         * Returns the estimated amount of free bytes in the index.
+         */
+        public double freeBytes() {
+            return freeBytes;
+        }
 
-    /**
-     * {@inheritDoc}
-     *
-     * @throws NullPointerException {@inheritDoc}
-     */
-    @Override
-    public View viewGt(byte[] key);
+        /**
+         * Returns the estimated total amount of bytes in the index.
+         */
+        public double totalBytes() {
+            return totalBytes;
+        }
 
-    /**
-     * {@inheritDoc}
-     *
-     * @throws NullPointerException {@inheritDoc}
-     */
-    @Override
-    public View viewLe(byte[] key);
+        /**
+         * Adds stats into a new object.
+         */
+        public Stats add(Stats augend) {
+            return new Stats(entryCount + augend.entryCount,
+                             keyBytes + augend.keyBytes,
+                             valueBytes + augend.valueBytes,
+                             freeBytes + augend.freeBytes,
+                             totalBytes + augend.totalBytes);
+        }
 
-    /**
-     * {@inheritDoc}
-     *
-     * @throws NullPointerException {@inheritDoc}
-     */
-    @Override
-    public View viewLt(byte[] key);
+        /**
+         * Subtract stats into a new object.
+         */
+        public Stats subtract(Stats subtrahend) {
+            return new Stats(entryCount - subtrahend.entryCount,
+                             keyBytes - subtrahend.keyBytes,
+                             valueBytes - subtrahend.valueBytes,
+                             freeBytes - subtrahend.freeBytes,
+                             totalBytes - subtrahend.totalBytes);
+        }
 
-    /**
-     * {@inheritDoc}
-     *
-     * @throws NullPointerException {@inheritDoc}
-     * @throws IllegalArgumentException {@inheritDoc}
-     */
-    @Override
-    public View viewPrefix(byte[] prefix, int trim);
+        /**
+         * Divide the stats by a scalar into a new object.
+         */
+        public Stats divide(double scalar) {
+            return new Stats(entryCount / scalar,
+                             keyBytes / scalar,
+                             valueBytes / scalar,
+                             freeBytes / scalar,
+                             totalBytes / scalar);
+        }
 
-    /**
-     * {@inheritDoc}
-     *
-     * @throws NullPointerException {@inheritDoc}
-     */
-    @Override
-    public View viewTransformed(Transformer transformer);
+        /**
+         * Round the stats to whole numbers into a new object.
+         */
+        public Stats round() {
+            return new Stats(Math.round(entryCount),
+                             Math.round(keyBytes),
+                             Math.round(valueBytes),
+                             Math.round(freeBytes),
+                             Math.round(totalBytes));
+        }
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public View viewReverse();
+        /**
+         * Divide the stats by a scalar and round to whole numbers into a new object.
+         */
+        public Stats divideAndRound(double scalar) {
+            return new Stats(Math.round(entryCount / scalar),
+                             Math.round(keyBytes / scalar),
+                             Math.round(valueBytes / scalar),
+                             Math.round(freeBytes / scalar),
+                             Math.round(totalBytes / scalar));
+        }
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public View viewUnmodifiable();
+        @Override
+        public Stats clone() {
+            try {
+                return (Stats) super.clone();
+            } catch (CloneNotSupportedException e) {
+                throw Utils.rethrow(e);
+            }
+        }
 
-    /**
-     * {@inheritDoc}
-     */
-    @Override
-    public boolean isUnmodifiable();
+        @Override
+        public int hashCode() {
+            long hash = Double.doubleToLongBits(entryCount);
+            hash = hash * 31 + Double.doubleToLongBits(keyBytes);
+            hash = hash * 31 + Double.doubleToLongBits(valueBytes);
+            hash = hash * 31 + Double.doubleToLongBits(freeBytes);
+            hash = hash * 31 + Double.doubleToLongBits(totalBytes);
+            return (int) Utils.scramble(hash);
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj) {
+                return true;
+            }
+            if (obj != null && obj.getClass() == Stats.class) {
+                Stats other = (Stats) obj;
+                return entryCount == other.entryCount
+                    && keyBytes == other.keyBytes
+                    && valueBytes == other.valueBytes
+                    && freeBytes == other.freeBytes
+                    && totalBytes == other.totalBytes;
+            }
+            return false;
+        }
+
+        @Override
+        public String toString() {
+            StringBuilder b = new StringBuilder("Index.Stats {");
+
+            boolean any = false;
+            any = append(b, any, "entryCount", entryCount);
+            any = append(b, any, "keyBytes", keyBytes);
+            any = append(b, any, "valueBytes", valueBytes);
+            any = append(b, any, "freeBytes", freeBytes);
+            any = append(b, any, "totalBytes", totalBytes);
+
+            b.append('}');
+            return b.toString();
+        }
+
+        private static boolean append(StringBuilder b, boolean any, String name, double value) {
+            if (!Double.isNaN(value)) {
+                if (any) {
+                    b.append(", ");
+                }
+
+                b.append(name).append('=');
+
+                long v = (long) value;
+                if (v == value) {
+                    b.append(v);
+                } else {
+                    b.append(value);
+                }
+                
+                any = true;
+            }
+
+            return any;
+        }
+    }
 
     /**
      * Verifies the integrity of the index.

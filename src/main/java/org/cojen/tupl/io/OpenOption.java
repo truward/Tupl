@@ -1,5 +1,5 @@
 /*
- *  Copyright 2012-2013 Brian S O'Neill
+ *  Copyright 2012-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,4 +36,7 @@ public enum OpenOption {
 
     /** All file I/O should be durable and bypass the file system cache, if possible. */
     DIRECT_IO,
+
+    /** File contents don't persist after an OS crash or power failure. */
+    NON_DURABLE,
 }

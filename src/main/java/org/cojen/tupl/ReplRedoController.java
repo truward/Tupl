@@ -1,5 +1,5 @@
 /*
- *  Copyright 2012-2013 Brian S O'Neill
+ *  Copyright 2012-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ import org.cojen.tupl.ext.ReplicationManager;
  * @author Brian S O'Neill
  * @see ReplRedoEngine
  */
+/*P*/
 final class ReplRedoController extends ReplRedoWriter {
     private final ReplicationManager mManager;
 
@@ -115,7 +116,10 @@ final class ReplRedoController extends ReplRedoWriter {
     @Override
     void checkpointStarted() throws IOException {
         mEngine.resume();
+    }
 
+    @Override
+    void checkpointFlushed() throws IOException {
         // Attempt to confirm the log position which was captured by the checkpoint switch.
 
         ReplRedoWriter redo = mCheckpointRedoWriter;
@@ -173,20 +177,45 @@ final class ReplRedoController extends ReplRedoWriter {
         return -txnId;
     }
 
+    @Override
+    void force(boolean metadata) throws IOException {
+        // Interpret metadata option as a durability confirmation request.
+
+        if (metadata) {
+            long pos;
+            {
+                ReplRedoWriter redo = mTxnRedoWriter;
+                if (redo.mReplWriter == null) {
+                    pos = mEngine.mDecodePosition;
+                } else synchronized (redo) {
+                    pos = redo.mLastCommitPos;
+                }
+            }
+
+            try {
+                mEngine.mManager.syncConfirm(pos);
+                return;
+            } catch (IOException e) {
+                // Try regular sync instead, in case leadership just changed.
+            }
+        }
+
+        mEngine.mManager.sync();
+    }
+
     /**
      * Called by ReplRedoEngine when local instance has become the leader.
      */
     synchronized void leaderNotify() throws UnmodifiableReplicaException, IOException {
-        ReplicationManager.Writer writer = mTxnRedoWriter.mReplWriter;
-
-        if (writer != null) {
+        if (mTxnRedoWriter.mReplWriter != null) {
             // Must be in replica mode.
             return;
         }
 
         mManager.flip();
+        ReplicationManager.Writer writer = mManager.writer();
 
-        if ((writer = mManager.writer()) == null) {
+        if (writer == null) {
             // False alarm?
             return;
         }
@@ -200,6 +229,10 @@ final class ReplRedoController extends ReplRedoWriter {
 
             redo.mConfirmedPos = redo.mLastCommitPos = writer.position();
             redo.mConfirmedTxnId = redo.mLastCommitTxnId = 0;
+
+            if (!writer.leaderNotify(() -> switchToReplica(writer, false))) {
+                throw unmodifiable(writer);
+            }
 
             // Clear the log state and write a reset op to signal leader transition.
             redo.clearAndReset();
@@ -237,23 +270,21 @@ final class ReplRedoController extends ReplRedoWriter {
         } else {
             // Invoke from a separate thread, avoiding deadlock. This method is invoked by
             // ReplRedoWriter while synchronized, which is an inconsistent order.
-            new Thread() {
-                public void run() {
-                    synchronized (ReplRedoController.this) {
-                        if (!switchToReplica(expect, true)) {
-                            return;
-                        }
+            new Thread(() -> {
+                synchronized (ReplRedoController.this) {
+                    if (!switchToReplica(expect, true)) {
+                        return;
                     }
-
-                    long pos = mManager.readPosition();
-
-                    redo.flipped(pos);
-
-                    // Start receiving if not, but does nothing if already receiving. A reset
-                    // op is expected, and so the initial transaction id can be zero.
-                    mEngine.startReceiving(pos, 0);
                 }
-            }.start();
+
+                long pos = mManager.readPosition();
+
+                redo.flipped(pos);
+
+                // Start receiving if not, but does nothing if already receiving. A reset
+                // op is expected, and so the initial transaction id can be zero.
+                mEngine.startReceiving(pos, 0);
+            }).start();
         }
 
         return true;

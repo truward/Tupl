@@ -1,5 +1,5 @@
 /*
- *  Copyright 2013 Brian S O'Neill
+ *  Copyright 2013-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ public class CloseNonDurableTest extends CloseTest {
 
     @Before
     public void createTempDb() throws Exception {
-        mDb = Database.open(new DatabaseConfig());
+        mDb = Database.open(new DatabaseConfig().directPageAccess(false));
     }
 
     @After

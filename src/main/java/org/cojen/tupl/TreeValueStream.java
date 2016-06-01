@@ -1,5 +1,5 @@
 /*
- *  Copyright 2013 Brian S O'Neill
+ *  Copyright 2013-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -17,8 +17,6 @@
 package org.cojen.tupl;
 
 import java.io.IOException;
-
-import java.util.concurrent.locks.Lock;
 
 import java.util.Arrays;
 
@@ -38,7 +36,7 @@ final class TreeValueStream extends AbstractStream {
     static final byte[] TOUCH_VALUE = new byte[0];
 
     private final TreeCursor mCursor;
-    private final Database mDatabase;
+    private final LocalDatabase mDatabase;
 
     /**
      * @param cursor positioned or unpositioned cursor, not autoloading
@@ -75,7 +73,7 @@ final class TreeValueStream extends AbstractStream {
 
     @Override
     public long length() throws IOException {
-        TreeCursorFrame frame;
+        CursorFrame frame;
         try {
             frame = mCursor.leafSharedNotSplit();
         } catch (IllegalStateException e) {
@@ -97,15 +95,15 @@ final class TreeValueStream extends AbstractStream {
                 return;
             }
 
-            final TreeCursorFrame leaf = mCursor.leafExclusiveNotSplit();
+            final CursorFrame leaf = mCursor.leafExclusiveNotSplit();
 
-            final Lock sharedCommitLock = mCursor.sharedCommitLock(leaf);
+            final CommitLock commitLock = mCursor.commitLock(leaf);
             try {
                 mCursor.notSplitDirty(leaf);
                 action(leaf, OP_SET_LENGTH, length, EMPTY_BYTES, 0, 0);
                 leaf.mNode.releaseExclusive();
             } finally {
-                sharedCommitLock.unlock();
+                commitLock.releaseShared();
             }
         } catch (IllegalStateException e) {
             checkOpen();
@@ -115,7 +113,7 @@ final class TreeValueStream extends AbstractStream {
 
     @Override
     int doRead(long pos, byte[] buf, int off, int len) throws IOException {
-        TreeCursorFrame frame;
+        CursorFrame frame;
         try {
             frame = mCursor.leafSharedNotSplit();
         } catch (IllegalStateException e) {
@@ -132,15 +130,15 @@ final class TreeValueStream extends AbstractStream {
     void doWrite(long pos, byte[] buf, int off, int len) throws IOException {
         // FIXME: txn undo/redo
         try {
-            final TreeCursorFrame leaf = mCursor.leafExclusiveNotSplit();
+            final CursorFrame leaf = mCursor.leafExclusiveNotSplit();
 
-            final Lock sharedCommitLock = mCursor.sharedCommitLock(leaf);
+            final CommitLock commitLock = mCursor.commitLock(leaf);
             try {
                 mCursor.notSplitDirty(leaf);
                 action(leaf, OP_WRITE, pos, buf, off, len);
                 leaf.mNode.releaseExclusive();
             } finally {
-                sharedCommitLock.unlock();
+                commitLock.releaseShared();
             }
         } catch (IllegalStateException e) {
             checkOpen();
@@ -183,7 +181,7 @@ final class TreeValueStream extends AbstractStream {
      * @return -1 if position is too high, 0 if no compaction required, or 1 if any nodes are
      * in the compaction zone
      */
-    int compactCheck(final TreeCursorFrame frame, long pos, final long highestNodeId)
+    int compactCheck(final CursorFrame frame, long pos, final long highestNodeId)
         throws IOException
     {
         final Node node = frame.mNode;
@@ -224,7 +222,7 @@ final class TreeValueStream extends AbstractStream {
         // Read the fragment header, as described by the Database.fragment method.
         header = p_byteGet(page, loc++);
 
-        final long vLen = Database.decodeFullFragmentedValueLength(header, page, loc);
+        final long vLen = LocalDatabase.decodeFullFragmentedValueLength(header, page, loc);
 
         if (pos >= vLen) {
             return -1;
@@ -246,7 +244,7 @@ final class TreeValueStream extends AbstractStream {
 
         if ((header & 0x01) == 0) {
             // Direct pointers.
-            loc += (((int) pos) / p_length(page)) * 6;
+            loc += (((int) pos) / pageSize(page)) * 6;
             final long fNodeId = p_uint48GetLE(page, loc);
             return fNodeId > highestNodeId ? 1 : 0; 
         }
@@ -287,7 +285,7 @@ final class TreeValueStream extends AbstractStream {
      * @return applicable only to OP_LENGTH and OP_READ
      */
     @SuppressWarnings("fallthrough")
-    private long action(final TreeCursorFrame frame,
+    private long action(final CursorFrame frame,
                         final int op, long pos, final byte[] b, int bOff, int bLen)
         throws IOException
     {
@@ -442,7 +440,8 @@ final class TreeValueStream extends AbstractStream {
                     } else if (pos == 0 && bOff == 0 && bLen == b.length) {
                         // Writing over the entire value.
                         try {
-                            node.updateLeafValue(mCursor.mTree, nodePos, 0, b);
+                            // TODO: need frame for rebalancing to work
+                            node.updateLeafValue(null, mCursor.mTree, nodePos, 0, b);
                         } catch (IOException e) {
                             node.releaseExclusive();
                             throw e;
@@ -550,10 +549,10 @@ final class TreeValueStream extends AbstractStream {
             if ((header & 0x01) == 0) {
                 // Direct pointers.
                 final int ipos = (int) pos;
-                loc += (ipos / p_length(page)) * 6;
-                int fNodeOff = ipos % p_length(page);
+                loc += (ipos / pageSize(page)) * 6;
+                int fNodeOff = ipos % pageSize(page);
                 while (true) {
-                    final int amt = Math.min(bLen, p_length(page) - fNodeOff);
+                    final int amt = Math.min(bLen, pageSize(page) - fNodeOff);
                     final long fNodeId = p_uint48GetLE(page, loc);
                     if (fNodeId == 0) {
                         // Reading a sparse value.
@@ -580,7 +579,7 @@ final class TreeValueStream extends AbstractStream {
                 // Reading a sparse value.
                 Arrays.fill(b, bOff, bOff + bLen, (byte) 0);
             } else {
-                Database db = mDatabase;
+                LocalDatabase db = mDatabase;
                 final Node inode = db.nodeMapLoadFragment(inodeId);
                 final int levels = db.calculateInodeLevels(vLen);
                 readMultilevelFragments(pos, levels, inode, b, bOff, bLen);
@@ -679,7 +678,7 @@ final class TreeValueStream extends AbstractStream {
 
                     long growth;
                     {
-                        long p = p_length(page);
+                        long p = pageSize(page);
                         growth = ((endPos + p - 1) / p) - ((vLen + p - 1) / p);
                     }
 
@@ -735,7 +734,7 @@ final class TreeValueStream extends AbstractStream {
                         p_int48PutLE(upage, 0, inode.mId);
                         inode.releaseExclusive();
                         // Zero-fill the rest.
-                        p_clear(upage, 6, p_length(upage));
+                        p_clear(upage, 6, pageSize(upage));
                         inode = upper;
                         levels++;
                     } while (newLevels > levels);
@@ -753,10 +752,10 @@ final class TreeValueStream extends AbstractStream {
             if ((header & 0x01) == 0) {
                 // Direct pointers.
                 final int ipos = (int) pos;
-                loc += (ipos / p_length(page)) * 6;
-                int fNodeOff = ipos % p_length(page);
+                loc += (ipos / pageSize(page)) * 6;
+                int fNodeOff = ipos % pageSize(page);
                 while (true) {
-                    final int amt = Math.min(bLen, p_length(page) - fNodeOff);
+                    final int amt = Math.min(bLen, pageSize(page) - fNodeOff);
                     final long fNodeId = p_uint48GetLE(page, loc);
                     if (fNodeId == 0) {
                         // Writing into a sparse value. Allocate a node and point to it.
@@ -768,15 +767,15 @@ final class TreeValueStream extends AbstractStream {
                             /*P*/ byte[] fNodePage = fNode.mPage;
                             p_clear(fNodePage, 0, fNodeOff);
                             p_copyFromArray(b, bOff, fNodePage, fNodeOff, amt);
-                            p_clear(fNodePage, fNodeOff + amt, p_length(fNodePage));
+                            p_clear(fNodePage, fNodeOff + amt, pageSize(fNodePage));
                         } finally {
                             fNode.releaseExclusive();
                         }
                     } else {
                         // Obtain node from cache, or read it only for partial write.
-                        Database db = mDatabase;
+                        LocalDatabase db = mDatabase;
                         final Node fNode =
-                            db.nodeMapLoadFragmentExclusive(fNodeId, amt < p_length(page));
+                            db.nodeMapLoadFragmentExclusive(fNodeId, amt < pageSize(page));
                         try {
                             if (db.markFragmentDirty(fNode)) {
                                 p_int48PutLE(page, loc, fNode.mId);
@@ -815,7 +814,7 @@ final class TreeValueStream extends AbstractStream {
      * @param loc fragmented value header location
      * @return new value location (after header), negated if converted to indirect format
      */
-    private int updateLengthField(TreeCursorFrame frame, /*P*/ byte[] page, int loc, long len)
+    private int updateLengthField(CursorFrame frame, /*P*/ byte[] page, int loc, long len)
         throws IOException
     {
         int growth;
@@ -947,9 +946,9 @@ final class TreeValueStream extends AbstractStream {
             if (inodeId == 0) {
                 // Writing into a sparse value. Allocate a node and point to it.
                 inode = mDatabase.allocDirtyFragmentNode();
-                p_clear(inode.mPage);
+                p_clear(inode.mPage, 0, pageSize(inode.mPage));
             } else {
-                Database db = mDatabase;
+                LocalDatabase db = mDatabase;
                 inode = db.nodeMapLoadFragmentExclusive(inodeId, true);
                 try {
                     if (!db.markFragmentDirty(inode)) {
@@ -978,7 +977,7 @@ final class TreeValueStream extends AbstractStream {
                                           byte[] b, int bOff, int bLen)
         throws IOException
     {
-        final Database db = mDatabase;
+        final LocalDatabase db = mDatabase;
 
         try {
             /*P*/ byte[] page = inode.mPage;
@@ -1000,14 +999,14 @@ final class TreeValueStream extends AbstractStream {
                 final Node childNode;
                 setPtr: {
                     long childNodeId = p_uint48GetLE(page, poffset);
-                    boolean partial = level > 0 | off > 0 | len < p_length(page);
+                    boolean partial = level > 0 | off > 0 | len < pageSize(page);
 
                     if (childNodeId == 0) {
                         // Writing into a sparse value. Allocate a node and point to it.
                         childNode = db.allocDirtyFragmentNode();
                         if (partial) {
                             // New page must be zero-filled.
-                            p_clear(childNode.mPage);
+                            p_clear(childNode.mPage, 0, pageSize(childNode.mPage));
                         }
                     } else {
                         // Obtain node from cache, or read it only for partial write.
@@ -1059,8 +1058,8 @@ final class TreeValueStream extends AbstractStream {
      * @param tail true if growth is at tail end of value
      * @return new value location (after header), negated if converted to indirect format
      */
-    private static int extendFragmentedValue(final Node node, final Tree tree, final int pos,
-                                             final long growth, final boolean tail)
+    private int extendFragmentedValue(final Node node, final Tree tree, final int pos,
+                                      final long growth, final boolean tail)
         throws IOException
     {
         // FIXME: allow split
@@ -1155,7 +1154,7 @@ final class TreeValueStream extends AbstractStream {
             /*P*/ byte[] ipage = inode.mPage;
             p_copyFromArray(value, off, ipage, 0, value.length - off);
             // Zero-fill the rest.
-            p_clear(ipage, value.length - off, p_length(ipage));
+            p_clear(ipage, value.length - off, pageSize(ipage));
 
             while (--levels != 0) {
                 Node upper = tree.mDatabase.allocDirtyFragmentNode();
@@ -1163,7 +1162,7 @@ final class TreeValueStream extends AbstractStream {
                 p_int48PutLE(upage, 0, inode.mId);
                 inode.releaseExclusive();
                 // Zero-fill the rest.
-                p_clear(upage, 6, p_length(upage));
+                p_clear(upage, 6, pageSize(upage));
                 inode = upper;
             }
 
@@ -1196,7 +1195,8 @@ final class TreeValueStream extends AbstractStream {
         // is simpler and re-uses existing code.
         node.doDeleteLeafEntry(pos, loc - entryLoc);
 
-        entryLoc = node.createLeafEntry(tree, pos, key.length + newValueLen);
+        // TODO: need frame for rebalancing to work
+        entryLoc = node.createLeafEntry(null, tree, pos, key.length + newValueLen);
 
         if (entryLoc < 0) {
             // FIXME: allow split or convert to indirect
@@ -1223,5 +1223,13 @@ final class TreeValueStream extends AbstractStream {
         }
 
         return entryLoc ^ retMask;
+    }
+
+    private int pageSize(/*P*/ byte[] page) {
+        /*P*/ // [
+        return page.length;
+        /*P*/ // |
+        /*P*/ // return mDatabase.pageSize();
+        /*P*/ // ]
     }
 }

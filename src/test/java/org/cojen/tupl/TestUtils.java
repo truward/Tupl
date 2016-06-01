@@ -1,5 +1,5 @@
 /*
- *  Copyright 2012-2013 Brian S O'Neill
+ *  Copyright 2012-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -18,6 +18,8 @@ package org.cojen.tupl;
 
 import java.io.*;
 import java.util.*;
+
+import org.cojen.tupl.io.*;
 
 /**
  * 
@@ -58,16 +60,59 @@ class TestUtils {
         }
     }
 
+    static enum OpenMode {NORMAL, DIRECT, DIRECT_MAPPED};
+
     static Database newTempDatabase() throws IOException {
-        return newTempDatabase(-1);
+        return newTempDatabase(-1, OpenMode.NORMAL);
+    }
+
+    static Database newTempDatabase(OpenMode mode) throws IOException {
+        return newTempDatabase(-1, mode);
     }
 
     static Database newTempDatabase(long cacheSize) throws IOException {
+        return newTempDatabase(cacheSize, OpenMode.NORMAL);
+    }
+
+    static Database newTempDatabase(long cacheSize, OpenMode mode) throws IOException {
         DatabaseConfig config = new DatabaseConfig();
         if (cacheSize >= 0) {
             config.minCacheSize(cacheSize);
         }
         config.durabilityMode(DurabilityMode.NO_FLUSH);
+        config.directPageAccess(false);
+
+        switch (mode) {
+        default:
+            throw new IllegalArgumentException();
+        case NORMAL:
+            config.directPageAccess(false);
+            break;
+        case DIRECT:
+            config.directPageAccess(true);
+            break;
+        case DIRECT_MAPPED:
+            int pageSize = config.mPageSize;
+            if (pageSize == 0) {
+                pageSize = 4096;
+            }
+            if (cacheSize < 0) {
+                cacheSize = pageSize * 1000;
+            }
+            File baseFile = newTempBaseFile();
+            File dbFile = new File(baseFile.getParentFile(), baseFile.getName() + ".db");
+            MappedPageArray pa = MappedPageArray.open
+                (pageSize, (cacheSize + pageSize - 1) / pageSize, dbFile,
+                 EnumSet.of(OpenOption.CREATE, OpenOption.MAPPED));
+            config.dataPageArray(pa);
+            config.directPageAccess(true);
+            Database db = Database.open(config);
+            synchronized (cTempDatabases) {
+                cTempDatabases.put(db, baseFile);
+            }
+            return db;
+        }
+
         return newTempDatabase(config);
     }
 
@@ -169,6 +214,21 @@ class TestUtils {
         }
     }
 
+    static void deleteRecursively(File file) {
+        if (file.isDirectory()) {
+            File[] dirs = file.listFiles();
+            if (dirs != null) {
+                for (File dir : dirs) {
+                    deleteRecursively(dir);
+                }
+            }
+        }
+
+        if (file.exists()) {
+            file.delete();
+        }
+    }
+
     private static void deleteDbFiles(File baseFile) {
         deleteDbFile(baseFile, ".db");
         deleteDbFile(baseFile, ".info");
@@ -247,5 +307,86 @@ class TestUtils {
             System.gc();
         }
         cForceGcRef = null;
+    }
+
+    private static File cSourceDir;
+
+    static synchronized File findSourceDirectory() throws IOException {
+        if (cSourceDir != null) {
+            return cSourceDir;
+        }
+
+        Set<File> visited = new HashSet<>();
+        File dir = new File(System.getProperty("user.dir")).getAbsoluteFile();
+        if (!dir.isDirectory()) {
+            throw new IllegalStateException("Not a directory: " + dir);
+        }
+
+        do {
+            File found = findSourceDirectory(visited, dir, 0);
+            if (found != null) {
+                cSourceDir = found;
+                return found;
+            }
+        } while ((dir = dir.getParentFile()) != null);
+
+        return null;
+    }
+
+    static File findSourceDirectory(Set<File> visited, File dir, int matchDepth) {
+        if (!visited.add(dir)) {
+            return null;
+        }
+
+        String match;
+        boolean tail = false;
+
+        switch (matchDepth) {
+        case 0:
+            match = "org";
+            break;
+        case 1:
+            match = "cojen";
+            break;
+        case 2:
+            match = "tupl";
+            break;
+        case 3:
+            match = "LocalDatabase.java";
+            tail = true;
+            break;
+        default:
+            throw new IllegalStateException();
+        }
+
+        File file = new File(dir, match);
+
+        if (file.exists()) {
+            if (!file.isDirectory()) {
+                if (tail) {
+                    return dir;
+                }
+            } else if (!tail) {
+                // Search down.
+                File found = findSourceDirectory(visited, file, matchDepth + 1);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+
+        // Search peers.
+
+        File[] peerDirs = dir.listFiles(f -> f.isDirectory() && !f.isHidden());
+        if (peerDirs != null) {
+            for (File peer : peerDirs) {
+                File found = findSourceDirectory(visited, peer, 0);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+
+        return null;
     }
 }

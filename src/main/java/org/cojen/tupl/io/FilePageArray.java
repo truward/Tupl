@@ -1,5 +1,5 @@
 /*
- *  Copyright 2012-2013 Brian S O'Neill
+ *  Copyright 2012-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,7 +40,9 @@ public class FilePageArray extends PageArray {
         super(pageSize);
 
         if (factory != null
-            && options.contains(OpenOption.CREATE) && !options.contains(OpenOption.READ_ONLY))
+            && options.contains(OpenOption.CREATE)
+            && !options.contains(OpenOption.NON_DURABLE)
+            && !options.contains(OpenOption.READ_ONLY))
         {
             factory.createFile(file);
         }
@@ -76,17 +78,31 @@ public class FilePageArray extends PageArray {
     }
 
     @Override
-    public void readPage(long index, /*P*/ byte[] buf, int offset, int length) throws IOException {
+    public void readPage(long index, byte[] dst, int offset, int length) throws IOException {
         if (index < 0) {
             throw new IndexOutOfBoundsException(String.valueOf(index));
         }
-        mFio.read(index * mPageSize, buf, offset, length);
+        mFio.read(index * mPageSize, dst, offset, length);
     }
 
     @Override
-    public void writePage(long index, /*P*/ byte[] buf, int offset) throws IOException {
+    public void readPage(long index, long dstPtr, int offset, int length) throws IOException {
+        if (index < 0) {
+            throw new IndexOutOfBoundsException(String.valueOf(index));
+        }
+        mFio.read(index * mPageSize, dstPtr, offset, length);
+    }
+
+    @Override
+    public void writePage(long index, byte[] src, int offset) throws IOException {
         int pageSize = mPageSize;
-        mFio.write(index * pageSize, buf, offset, pageSize);
+        mFio.write(index * pageSize, src, offset, pageSize);
+    }
+
+    @Override
+    public void writePage(long index, long srcPtr, int offset) throws IOException {
+        int pageSize = mPageSize;
+        mFio.write(index * pageSize, srcPtr, offset, pageSize);
     }
 
     @Override

@@ -1,5 +1,5 @@
 /*
- *  Copyright 2011-2013 Brian S O'Neill
+ *  Copyright 2011-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -16,7 +16,10 @@
 
 package org.cojen.tupl;
 
-import java.lang.ref.WeakReference;
+import java.lang.ref.SoftReference;
+
+import org.cojen.tupl.util.Latch;
+import org.cojen.tupl.util.LatchCondition;
 
 import static org.cojen.tupl.LockResult.*;
 
@@ -25,6 +28,7 @@ import static org.cojen.tupl.LockResult.*;
  *
  * @author Brian S O'Neill
  */
+/*P*/
 final class LockManager {
     // Parameter passed to LockHT.tryLock. For new Lock instances, value will be stored as-is
     // into Lock.mLockCount field, which is why the numbers seem a bit weird.
@@ -36,7 +40,7 @@ final class LockManager {
     private final LockHT[] mHashTables;
     private final int mHashTableShift;
 
-    private final ThreadLocal<WeakReference<Locker>> mLocalLockerRef;
+    private final ThreadLocal<SoftReference<Locker>> mLocalLockerRef;
 
     LockManager(LockUpgradeRule lockUpgradeRule, long timeoutNanos) {
         this(lockUpgradeRule, timeoutNanos, Runtime.getRuntime().availableProcessors() * 16);
@@ -71,20 +75,18 @@ final class LockManager {
     }
 
     /**
-     * Returns true if a shared lock can be immediately granted. Caller must
-     * hold a coarse latch to prevent this state from changing.
+     * Returns true if a shared lock can be granted for the given key. Caller must hold the
+     * node latch which contains the key.
      *
      * @param locker optional locker
      */
     final boolean isAvailable(LockOwner locker, long indexId, byte[] key, int hash) {
-        LockHT ht = getLockHT(hash);
-        ht.acquireShared();
-        try {
-            Lock lock = ht.lockFor(indexId, key, hash);
-            return lock == null ? true : lock.isAvailable(locker);
-        } finally {
-            ht.releaseShared();
-        }
+        // Note that no LockHT latch is acquired. The current thread is not required to
+        // immediately observe the activity of other threads acting upon the same lock. If
+        // another thread has just acquired an exclusive lock, it must still acquire the node
+        // latch before any changes can be made.
+        Lock lock = getLockHT(hash).lockFor(indexId, key, hash);
+        return lock == null ? true : lock.isAvailable(locker);
     }
 
     final LockResult check(LockOwner locker, long indexId, byte[] key, int hash) {
@@ -177,10 +179,10 @@ final class LockManager {
     }
 
     final Locker localLocker() {
-        WeakReference<Locker> lockerRef = mLocalLockerRef.get();
+        SoftReference<Locker> lockerRef = mLocalLockerRef.get();
         Locker locker;
         if (lockerRef == null || (locker = lockerRef.get()) == null) {
-            mLocalLockerRef.set(new WeakReference<>(locker = new Locker(this)));
+            mLocalLockerRef.set(new SoftReference<>(locker = new Locker(this)));
         }
         return locker;
     }
@@ -457,7 +459,7 @@ final class LockManager {
 
                             // Interrupt all waiters.
 
-                            WaitQueue q = e.mQueueU;
+                            LatchCondition q = e.mQueueU;
                             if (q != null) {
                                 q.clear();
                                 e.mQueueU = null;

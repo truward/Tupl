@@ -1,5 +1,5 @@
 /*
- *  Copyright 2011-2013 Brian S O'Neill
+ *  Copyright 2011-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,13 +27,15 @@ import java.security.GeneralSecurityException;
 import java.util.BitSet;
 import java.util.EnumSet;
 
-import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantReadWriteLock.ReadLock;
 
 import org.cojen.tupl.io.FileFactory;
 import org.cojen.tupl.io.FilePageArray;
 import org.cojen.tupl.io.OpenOption;
 import org.cojen.tupl.io.PageArray;
 import org.cojen.tupl.io.StripedPageArray;
+
+import org.cojen.tupl.util.Latch;
 
 import static java.lang.System.arraycopy;
 
@@ -168,29 +170,6 @@ final class DurablePageDb extends PageDb {
         if (pageSize < MINIMUM_PAGE_SIZE) {
             throw new IllegalArgumentException
                 ("Page size is too small: " + pageSize + " < " + MINIMUM_PAGE_SIZE);
-        }
-    }
-
-    static class WrongPageSize extends Exception {
-        private static final long serialVersionUID = 1L;
-
-        private final int mExpected;
-        private final int mActual;
-
-        WrongPageSize(int expected, int actual) {
-            mExpected = expected;
-            mActual = actual;
-        }
-
-        @Override
-        public Throwable fillInStackTrace() {
-            return this;
-        }
-
-        DatabaseException rethrow() throws DatabaseException {
-            throw new DatabaseException
-                ("Actual page size does not match configured page size: "
-                 + mActual + " != " + mExpected);
         }
     }
 
@@ -337,7 +316,7 @@ final class DurablePageDb extends PageDb {
     }
 
     @Override
-    public Node allocLatchedNode(Database db, int mode) throws IOException {
+    public Node allocLatchedNode(LocalDatabase db, int mode) throws IOException {
         long nodeId = allocPage();
         try {
             Node node = db.allocLatchedNode(nodeId, mode);
@@ -394,14 +373,9 @@ final class DurablePageDb extends PageDb {
     }
 
     @Override
-    public void readPage(long id, /*P*/ byte[] buf) throws IOException {
-        readPage(id, buf, 0);
-    }
-
-    @Override
-    public void readPage(long id, /*P*/ byte[] buf, int offset) throws IOException {
+    public void readPage(long id, /*P*/ byte[] page) throws IOException {
         try {
-            mPageArray.readPage(id, buf, offset, pageSize());
+            mPageArray.readPage(id, page, 0, pageSize());
         } catch (Throwable e) {
             throw closeOnFailure(e);
         }
@@ -409,7 +383,7 @@ final class DurablePageDb extends PageDb {
 
     @Override
     public long allocPage() throws IOException {
-        mCommitLock.readLock().lock();
+        mCommitLock.acquireShared();
         try {
             return mPageManager.allocPage();
         } catch (DatabaseException e) {
@@ -420,35 +394,25 @@ final class DurablePageDb extends PageDb {
         } catch (Throwable e) {
             throw closeOnFailure(e);
         } finally {
-            mCommitLock.readLock().unlock();
+            mCommitLock.releaseShared();
         }
     }
 
     @Override
-    public void writePage(long id, /*P*/ byte[] buf) throws IOException {
-        writePage(id, buf, 0);
-    }
-
-    @Override
-    public void writePage(long id, /*P*/ byte[] buf, int offset) throws IOException {
+    public void writePage(long id, /*P*/ byte[] page) throws IOException {
         checkId(id);
-        mPageArray.writePage(id, buf, offset);
+        mPageArray.writePage(id, page, 0);
     }
 
     @Override
-    public /*P*/ byte[] evictPage(long id, /*P*/ byte[] buf) throws IOException {
+    public /*P*/ byte[] evictPage(long id, /*P*/ byte[] page) throws IOException {
         checkId(id);
-        return mPageArray.evictPage(id, buf);
+        return mPageArray.evictPage(id, page);
     }
 
     @Override
-    public void cachePage(long id, /*P*/ byte[] buf) throws IOException {
-        mPageArray.cachePage(id, buf);
-    }
-
-    @Override
-    public void cachePage(long id, /*P*/ byte[] buf, int offset) throws IOException {
-        mPageArray.cachePage(id, buf, offset);
+    public void cachePage(long id, /*P*/ byte[] page) throws IOException {
+        mPageArray.cachePage(id, page);
     }
 
     @Override
@@ -459,7 +423,7 @@ final class DurablePageDb extends PageDb {
     @Override
     public void deletePage(long id) throws IOException {
         checkId(id);
-        mCommitLock.readLock().lock();
+        mCommitLock.acquireShared();
         try {
             mPageManager.deletePage(id);
         } catch (IOException e) {
@@ -467,7 +431,7 @@ final class DurablePageDb extends PageDb {
         } catch (Throwable e) {
             throw closeOnFailure(e);
         } finally {
-            mCommitLock.readLock().unlock();
+            mCommitLock.releaseShared();
         }
         mPageArray.uncachePage(id);
     }
@@ -475,7 +439,7 @@ final class DurablePageDb extends PageDb {
     @Override
     public void recyclePage(long id) throws IOException {
         checkId(id);
-        mCommitLock.readLock().lock();
+        mCommitLock.acquireShared();
         try {
             try {
                 mPageManager.recyclePage(id);
@@ -487,7 +451,7 @@ final class DurablePageDb extends PageDb {
         } catch (Throwable e) {
             throw closeOnFailure(e);
         } finally {
-            mCommitLock.readLock().unlock();
+            mCommitLock.releaseShared();
         }
     }
 
@@ -505,7 +469,7 @@ final class DurablePageDb extends PageDb {
             return 0;
         }
 
-        final Lock lock = mCommitLock.readLock();
+        final ReadLock lock = mCommitLock.readLock();
 
         for (int i=0; i<pageCount; i++) {
             lock.lock();
@@ -522,14 +486,24 @@ final class DurablePageDb extends PageDb {
     }
 
     @Override
+    public long directPagePointer(long id) throws IOException {
+        return mPageArray.directPagePointer(id);
+    }
+
+    @Override
+    public long copyPage(long srcId, long dstId) throws IOException {
+        return mPageArray.copyPage(srcId, dstId);
+    }
+
+    @Override
     public boolean compactionStart(long targetPageCount) throws IOException {
-        mCommitLock.writeLock().lock();
+        mCommitLock.acquireExclusive();
         try {
             return mPageManager.compactionStart(targetPageCount);
         } catch (Throwable e) {
             throw closeOnFailure(e);
         } finally {
-            mCommitLock.writeLock().unlock();
+            mCommitLock.releaseExclusive();
         }
     }
 
@@ -572,8 +546,8 @@ final class DurablePageDb extends PageDb {
     public void commit(boolean resume, /*P*/ byte[] header, final CommitCallback callback)
         throws IOException
     {
-        mCommitLock.writeLock().lock();
-        mCommitLock.readLock().lock();
+        mCommitLock.acquireExclusive();
+        mCommitLock.acquireShared();
 
         mHeaderLatch.acquireShared();
         final int commitNumber = mCommitNumber + 1;
@@ -581,7 +555,7 @@ final class DurablePageDb extends PageDb {
 
         // Downgrade and keep read lock. This prevents another commit from
         // starting concurrently.
-        mCommitLock.writeLock().unlock();
+        mCommitLock.releaseExclusive();
 
         try {
             try {
@@ -607,7 +581,7 @@ final class DurablePageDb extends PageDb {
                 throw closeOnFailure(e);
             }
         } finally {
-            mCommitLock.readLock().unlock();
+            mCommitLock.releaseShared();
         }
     }
 
@@ -668,7 +642,7 @@ final class DurablePageDb extends PageDb {
     /**
      * @see SnapshotPageArray#beginSnapshot
      */
-    Snapshot beginSnapshot(Database db) throws IOException {
+    Snapshot beginSnapshot(LocalDatabase db) throws IOException {
         mHeaderLatch.acquireShared();
         try {
             long pageCount, redoPos;
@@ -676,7 +650,7 @@ final class DurablePageDb extends PageDb {
             try {
                 mPageArray.readPage(mCommitNumber & 1, header, 0, MINIMUM_PAGE_SIZE);
                 pageCount = PageManager.readTotalPageCount(header, I_MANAGER_HEADER);
-                redoPos = Database.readRedoPosition(header, I_EXTRA_DATA); 
+                redoPos = LocalDatabase.readRedoPosition(header, I_EXTRA_DATA); 
             } finally {
                 p_delete(header);
             }
@@ -784,6 +758,10 @@ final class DurablePageDb extends PageDb {
                 pa.writePage(index, p_transferTo(buffer, bufferPage));
                 index++;
             }
+
+            // Ensure newly restored snapshot is durable and also ensure that PageArray (if a
+            // MappedPageArray) no longer considers itself to be empty.
+            pa.sync(true);
         } finally {
             p_delete(bufferPage);
             closeQuietly(null, in);
@@ -825,13 +803,13 @@ final class DurablePageDb extends PageDb {
         setHeaderChecksum(header);
 
         // Write multiple header copies in the page, in case special recovery is required.
-        int dupCount = p_length(header) / MINIMUM_PAGE_SIZE;
+        int dupCount = pageSize() / MINIMUM_PAGE_SIZE;
         for (int i=1; i<dupCount; i++) {
             p_copy(header, 0, header, i * MINIMUM_PAGE_SIZE, MINIMUM_PAGE_SIZE);
         }
 
         // Ensure all writes are flushed before flushing the header. There's
-        // otherwise no ordering guarantees. Metadata should also be be flushed
+        // otherwise no ordering guarantees. Metadata should also be flushed
         // first, because the header won't affect it.
         array.sync(true);
 

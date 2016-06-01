@@ -1,5 +1,5 @@
 /*
- *  Copyright 2014 Brian S O'Neill
+ *  Copyright 2014-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.IntBuffer;
 
-import static org.cojen.tupl.PageOps.*;
+import org.cojen.tupl.util.Latch;
 
 /**
  * Page cache which uses direct buffers and very few Java objects, eliminating garbage
@@ -33,7 +33,7 @@ import static org.cojen.tupl.PageOps.*;
  * @author Brian S O'Neill
  */
 @SuppressWarnings("serial")
-final class DirectPageCache extends Latch implements PageCache {
+final class BasicPageCache extends Latch implements PageCache {
     /*
       Node format:
 
@@ -66,7 +66,7 @@ final class DirectPageCache extends Latch implements PageCache {
     /**
      * @param capacity capacity in bytes
      */
-    DirectPageCache(int capacity, int pageSize) {
+    BasicPageCache(int capacity, int pageSize) {
         int entryCount = entryCountFor(capacity, pageSize);
 
         mPageSize = pageSize;
@@ -108,9 +108,22 @@ final class DirectPageCache extends Latch implements PageCache {
 
     @Override
     public boolean add(final long pageId,
-                       final /*P*/ byte[] page, final int offset, final int length,
+                       final byte[] page, final int offset,
                        final boolean canEvict)
     {
+        return add(pageId, canEvict, (dst, pageSize) -> {
+            dst.put(page, offset, pageSize);
+        });
+    }
+
+    @Override
+    public boolean add(long pageId, long pagePtr, int offset, boolean canEvict) {
+        return add(pageId, canEvict, (dst, pageSize) -> {
+            DirectPageOps.p_copyToBB(pagePtr, offset, dst, pageSize);
+        });
+    }
+
+    private boolean add(final long pageId, final boolean canEvict, final CopyToBB copier) {
         acquireExclusive();
         try {
             final IntBuffer nodes = mNodes;
@@ -125,13 +138,12 @@ final class DirectPageCache extends Latch implements PageCache {
             // Try to replace existing entry.
             int ptr = hashTable[index];
             if (ptr >= 0) {
-                int prevPtr = NO_NEXT_ENTRY;
                 while (true) {
                     final int chainNextPtr = nodes.get(ptr + CHAIN_NEXT_PTR_FIELD);
                     if (getPageId(nodes, ptr) == pageId) {
                         // Found it.
                         mData.position((ptr / NODE_SIZE_IN_INTS) * mPageSize);
-                        p_copyToBB(page, offset, mData, length);
+                        copier.copyToBB(mData, mPageSize);
 
                         if (ptr != mMostRecentPtr) {
                             // Move to most recent.
@@ -153,7 +165,6 @@ final class DirectPageCache extends Latch implements PageCache {
                     if (chainNextPtr < 0) {
                         break;
                     }
-                    prevPtr = ptr;
                     ptr = chainNextPtr;
                 }
             }
@@ -200,7 +211,7 @@ final class DirectPageCache extends Latch implements PageCache {
 
             // Copy page into the data buffer.
             mData.position((ptr / NODE_SIZE_IN_INTS) * mPageSize);
-            p_copyToBB(page, offset, mData, length);
+            copier.copyToBB(mData, mPageSize);
 
             // Add new entry into the hashtable.
             nodes.put(ptr + CHAIN_NEXT_PTR_FIELD, hashTable[index]);
@@ -215,8 +226,23 @@ final class DirectPageCache extends Latch implements PageCache {
 
     @Override
     public boolean copy(final long pageId, final int start,
-                        final /*P*/ byte[] page, final int offset, final int length)
+                        final byte[] page, final int offset)
     {
+        return copy(pageId, start, (src, pageSize) -> {
+            src.get(page, offset, pageSize);
+        });
+    }
+
+    @Override
+    public boolean copy(final long pageId, final int start,
+                        final long pagePtr, final int offset)
+    {
+        return copy(pageId, start, (src, pageSize) -> {
+            DirectPageOps.p_copyFromBB(src, pagePtr, offset, pageSize);
+        });
+    }
+
+    private boolean copy(final long pageId, final int start, final CopyFromBB copier) {
         acquireShared();
         try {
             final IntBuffer nodes = mNodes;
@@ -230,19 +256,17 @@ final class DirectPageCache extends Latch implements PageCache {
 
             int ptr = hashTable[index];
             if (ptr >= 0) {
-                int prevPtr = NO_NEXT_ENTRY;
                 while (true) {
                     final int chainNextPtr = nodes.get(ptr + CHAIN_NEXT_PTR_FIELD);
                     if (getPageId(nodes, ptr) == pageId) {
                         // Found it.
                         mData.position(((ptr / NODE_SIZE_IN_INTS) * mPageSize) + start);
-                        p_copyFromBB(mData, page, offset, length);
+                        copier.copyFromBB(mData, mPageSize);
                         return true;
                     }
                     if (chainNextPtr < 0) {
                         break;
                     }
-                    prevPtr = ptr;
                     ptr = chainNextPtr;
                 }
             }
@@ -253,10 +277,22 @@ final class DirectPageCache extends Latch implements PageCache {
         }
     }
 
-    @Override
     public boolean remove(final long pageId,
-                          final /*P*/ byte[] page, final int offset, final int length)
+                          final byte[] page, final int offset, final int length)
     {
+        return remove(pageId, page == null ? null : (src, pageSize) -> {
+            src.get(page, offset, length);
+        });
+    }
+
+    @Override
+    public boolean remove(long pageId, long pagePtr, int offset, int length) {
+        return remove(pageId, pagePtr == DirectPageOps.p_null() ? null : (src, pageSize) -> {
+            DirectPageOps.p_copyFromBB(src, pagePtr, offset, length);
+        });
+    }
+
+    private boolean remove(final long pageId, final CopyFromBB copier) {
         acquireExclusive();
         try {
             final IntBuffer nodes = mNodes;
@@ -276,10 +312,10 @@ final class DirectPageCache extends Latch implements PageCache {
                     if (getPageId(nodes, ptr) == pageId) {
                         // Found it.
 
-                        if (page != PageOps.p_null()) {
+                        if (copier != null) {
                             // Copy data buffer into the page.
                             mData.position((ptr / NODE_SIZE_IN_INTS) * mPageSize);
-                            p_copyFromBB(mData, page, offset, length);
+                            copier.copyFromBB(mData, mPageSize);
                         }
 
                         if (ptr != mLeastRecentPtr) {
@@ -353,6 +389,16 @@ final class DirectPageCache extends Latch implements PageCache {
         }
     }
 
+    @FunctionalInterface
+    static interface CopyToBB {
+        void copyToBB(ByteBuffer dst, int pageSize);
+    }
+
+    @FunctionalInterface
+    static interface CopyFromBB {
+        void copyFromBB(ByteBuffer src, int pageSize);
+    }
+
     private static long getPageId(IntBuffer nodes, int ptr) {
         return (nodes.get(ptr + PAGE_ID_FIELD) & 0xffffffffL)
             | (((long) nodes.get(ptr + (PAGE_ID_FIELD + 1))) << 32);
@@ -364,6 +410,6 @@ final class DirectPageCache extends Latch implements PageCache {
     }
 
     private static int hash(long pageId) {
-        return (((int) pageId) ^ ((int) (pageId >>> 32))) & 0x7fffffff;
+        return Long.hashCode(pageId) & 0x7fffffff;
     }
 }

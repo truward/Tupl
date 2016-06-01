@@ -1,5 +1,5 @@
 /*
- *  Copyright 2012-2013 Brian S O'Neill
+ *  Copyright 2012-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@
 package org.cojen.tupl;
 
 import java.util.Random;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.*;
 import static org.junit.Assert.*;
@@ -927,7 +928,7 @@ public class CursorTest {
         assertTrue(verify(ix));
     }
 
-    private void verifyExtremities(View ix) throws Exception {
+    protected void verifyExtremities(View ix) throws Exception {
         TreeCursor extremity = treeCursor(ix.newCursor(Transaction.BOGUS));
         assertTrue(extremity.verifyExtremities(Node.LOW_EXTREMITY));
         assertTrue(extremity.verifyExtremities(Node.HIGH_EXTREMITY));
@@ -1081,6 +1082,109 @@ public class CursorTest {
     }
 
     @Test
+    public void lockNoLoad() throws Exception {
+        lockNoLoad(false, false);
+        lockNoLoad(false, true);
+        lockNoLoad(true, false);
+        lockNoLoad(true, true);
+    }
+
+    private void lockNoLoad(boolean ghost, boolean ge) throws Exception {
+        View ix = openIndex("test");
+
+        for (Cursor c = ix.newCursor(null); c.key() != null; c.next()) {
+            c.store(null);
+        }
+
+        byte[] key1 = "hello".getBytes();
+        byte[] key2 = "hello!".getBytes();
+        byte[] value1 = "world".getBytes();
+        byte[] value2 = "world!".getBytes();
+
+        byte[] key = key1;
+        byte[] value;
+
+        if (ghost) {
+            ix.store(null, key1, value1);
+            value = null;
+        } else {
+            value = value1;
+        }
+
+        ix.store(null, key2, value2);
+
+        Thread t = new Thread(() -> {
+            try {
+                Transaction txn = mDb.newTransaction();
+                try {
+                    ix.store(txn, key, value);
+                    Thread.sleep(1000);
+                    txn.commit();
+                } finally {
+                    txn.reset();
+                }
+            } catch (Exception e) {
+                throw Utils.rethrow(e);
+            }
+        });
+
+        t.start();
+
+        // Wait for thread to lock the key.
+        while (t.isAlive()) {
+            Transaction txn = mDb.newTransaction();
+            try {
+                txn.lockTimeout(1, TimeUnit.MILLISECONDS);
+                try {
+                    ix.load(txn, key);
+                } catch (LockTimeoutException e) {
+                    // Locked.
+                    break;
+                }
+            } finally {
+                txn.reset();
+            }
+        }
+
+        Transaction txn = mDb.newTransaction();
+        try {
+            txn.lockTimeout(10, TimeUnit.SECONDS);
+
+            Cursor c = ix.newCursor(txn);
+            try {
+                c.autoload(false);
+
+                // Even if the lock is not immediately available, the value shouldn't be loaded.
+                // Ghost detection still works, as some operations depend on this behavior.
+
+                if (ge) {
+                    c.findGe(key);
+                    if (ghost) {
+                        assertArrayEquals(key2, c.key());
+                    } else {
+                        assertArrayEquals(key1, c.key());
+                    }
+                    assertTrue(c.value() == Cursor.NOT_LOADED);
+                } else {
+                    c.find(key);
+                    assertArrayEquals(key1, c.key());
+                    if (ghost) {
+                        assertNull(c.value());
+                    } else {
+                        assertTrue(c.value() == Cursor.NOT_LOADED);
+                    }
+                }
+            } finally {
+                c.reset();
+            }
+        } finally {
+            txn.reset();
+        }
+
+        t.join();
+    }
+
+    @Test
     public void stability() throws Exception {
         // Verifies that cursors are positioned properly after making structural modifications
         // to the tree.
@@ -1109,6 +1213,8 @@ public class CursorTest {
         }
 
         assertTrue(verify(ix));
+
+        assertEquals(foundCursors.length + notFoundCursors.length, mDb.stats().cursorCount());
 
         verifyPositions(ix, foundCursors);
         verifyPositions(ix, notFoundCursors);
@@ -1166,7 +1272,7 @@ public class CursorTest {
         verifyPositions(ix, cursors);
     }
 
-    private void verifyPositions(View ix, Cursor[] cursors) throws Exception {
+    protected void verifyPositions(View ix, Cursor[] cursors) throws Exception {
         for (Cursor existing : cursors) {
             Cursor c = ix.newCursor(Transaction.BOGUS);
             byte[] key = existing.key();

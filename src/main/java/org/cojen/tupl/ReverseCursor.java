@@ -1,5 +1,5 @@
 /*
- *  Copyright 2012-2013 Brian S O'Neill
+ *  Copyright 2012-2015 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -195,10 +195,12 @@ final class ReverseCursor implements Cursor {
         mSource.commit(value);
     }
 
+    /*
     @Override
     public Stream newStream() {
         return mSource.newStream();
     }
+    */
 
     @Override
     public Cursor copy() {
