@@ -1,7 +1,7 @@
 Tupl
 ====
 
-# Why this fork exists?
+# Why does this fork exists?
 
 This is a fork of the original Tupl project.
 
@@ -18,7 +18,7 @@ Sample usage in maven:
 <dependency>
   <groupId>com.truward.tupl</groupId>
   <artifactId>tupl</artifactId>
-  <version>1.2.8</version>
+  <version>1.3.2</version>
 </dependency>
 ```
 
