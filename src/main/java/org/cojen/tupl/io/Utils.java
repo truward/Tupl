@@ -23,10 +23,15 @@ import java.io.EOFException;
 import java.io.InputStream;
 import java.io.IOException;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
+
 import java.lang.reflect.Method;
 
 import java.nio.Buffer;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -36,6 +41,47 @@ import java.util.Map;
  * @author Brian S O'Neill
  */
 public class Utils {
+    private static final MethodHandle cCompareUnsigned_1; // basic form
+    private static final MethodHandle cCompareUnsigned_2; // offset/length form
+    private static final MethodHandle cCompareUnsigned_3; // start/end form
+
+    static {
+        MethodType type = MethodType.methodType(int.class, byte[].class, byte[].class);
+        MethodHandle method = findFastCompareMethod("compareUnsigned", type);
+        if (method == null) {
+            method = findLocalCompareMethod("doCompareUnsigned", type);
+        }
+        cCompareUnsigned_1 = method;
+
+        type = MethodType.methodType
+            (int.class, byte[].class, int.class, int.class, byte[].class, int.class, int.class);
+        method = findFastCompareMethod("compareUnsigned", type);
+        if (method == null) {
+            cCompareUnsigned_2 = findLocalCompareMethod("doCompareUnsigned", type);
+            cCompareUnsigned_3 = null; // won't be used
+        } else {
+            // Use an adapter to fix handling of length paramaters.
+            cCompareUnsigned_2 = findLocalCompareMethod("compareUnsignedAdapter", type);
+            cCompareUnsigned_3 = method;
+        }
+    }
+
+    private static MethodHandle findFastCompareMethod(String name, MethodType type) {
+        try {
+            return MethodHandles.publicLookup().findStatic(Arrays.class, name, type);
+        } catch (NoSuchMethodException | IllegalAccessException e) {
+            return null;
+        }
+    }
+
+    private static MethodHandle findLocalCompareMethod(String name, MethodType type) {
+        try {
+            return MethodHandles.lookup().findStatic(Utils.class, name, type);
+        } catch (Exception e2) {
+            throw rethrow(e2);
+        }
+    }
+
     protected Utils() {
     }
 
@@ -45,7 +91,11 @@ public class Utils {
      * @return negative if 'a' is less, zero if equal, greater than zero if greater
      */
     public static int compareUnsigned(byte[] a, byte[] b) {
-        return compareUnsigned(a, 0, a.length, b, 0, b.length);
+        try {
+            return (int) cCompareUnsigned_1.invokeExact(a, b);
+        } catch (Throwable e) {
+            throw rethrow(e);
+        }
     }
 
     /**
@@ -60,6 +110,20 @@ public class Utils {
      * @return negative if 'a' is less, zero if equal, greater than zero if greater
      */
     public static int compareUnsigned(byte[] a, int aoff, int alen, byte[] b, int boff, int blen) {
+        try {
+            return (int) cCompareUnsigned_2.invokeExact(a, aoff, alen, b, boff, blen);
+        } catch (Throwable e) {
+            throw rethrow(e);
+        }
+    }
+
+    private static int doCompareUnsigned(byte[] a, byte[] b) {
+        return doCompareUnsigned(a, 0, a.length, b, 0, b.length);
+    }
+
+    private static int doCompareUnsigned(byte[] a, int aoff, int alen,
+                                         byte[] b, int boff, int blen)
+    {
         int minLen = Math.min(alen, blen);
         for (int i=0; i<minLen; i++) {
             byte ab = a[aoff + i];
@@ -69,6 +133,16 @@ public class Utils {
             }
         }
         return alen - blen;
+    }
+
+    /**
+     * Adapts the offset/length form to work with the start/end form.
+     */
+    private static int compareUnsignedAdapter(byte[] a, int aoff, int alen,
+                                              byte[] b, int boff, int blen)
+        throws Throwable
+    {
+        return (int) cCompareUnsigned_3.invokeExact(a, aoff, aoff + alen, b, boff, boff + blen);
     }
 
     /**
