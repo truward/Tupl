@@ -18,6 +18,8 @@ package org.cojen.tupl;
 
 import java.io.IOException;
 
+import java.util.Arrays;
+
 /**
  * Mapping of keys to values, in no particular order. Subclasses and
  * implementations may specify an explicit ordering.
@@ -51,11 +53,10 @@ public interface View {
     }
 
     /**
-     * Returns a copy of the value for the given key, or null if no matching
-     * entry exists.
+     * Returns a copy of the value for the given key, or null if no matching entry exists.
      *
-     * <p>If the entry must be locked, ownership of the key instance is
-     * transferred. The key must not be modified after calling this method.
+     * <p>If the entry must be locked, ownership of the key instance is transferred. The key
+     * must not be modified after calling this method.
      *
      * @param txn optional transaction; pass null for {@link
      * LockMode#READ_COMMITTED READ_COMMITTED} locking behavior
@@ -64,13 +65,21 @@ public interface View {
      * @throws NullPointerException if key is null
      * @throws IllegalArgumentException if transaction belongs to another database instance
      */
-    public byte[] load(Transaction txn, byte[] key) throws IOException;
+    public default byte[] load(Transaction txn, byte[] key) throws IOException {
+        Cursor c = newCursor(txn);
+        try {
+            c.find(key);
+            return c.value();
+        } finally {
+            c.reset();
+        }
+    }
 
     /**
      * Unconditionally associates a value with the given key.
      *
-     * <p>If the entry must be locked, ownership of the key instance is
-     * transferred. The key must not be modified after calling this method.
+     * <p>If the entry must be locked, ownership of the key instance is transferred. The key
+     * must not be modified after calling this method.
      *
      * @param txn optional transaction; pass null for auto-commit mode
      * @param key non-null key
@@ -79,13 +88,22 @@ public interface View {
      * @throws IllegalArgumentException if transaction belongs to another database instance
      * @throws ViewConstraintException if entry is not permitted
      */
-    public void store(Transaction txn, byte[] key, byte[] value) throws IOException;
+    public default void store(Transaction txn, byte[] key, byte[] value) throws IOException {
+        Cursor c = newCursor(txn);
+        try {
+            c.autoload(false);
+            c.find(key);
+            c.store(value);
+        } finally {
+            c.reset();
+        }
+    }
 
     /**
      * Unconditionally associates a value with the given key, returning the previous value.
      *
-     * <p>If the entry must be locked, ownership of the key instance is
-     * transferred. The key must not be modified after calling this method.
+     * <p>If the entry must be locked, ownership of the key instance is transferred. The key
+     * must not be modified after calling this method.
      *
      * @param txn optional transaction; pass null for auto-commit mode
      * @param key non-null key
@@ -95,15 +113,24 @@ public interface View {
      * @throws IllegalArgumentException if transaction belongs to another database instance
      * @throws ViewConstraintException if entry is not permitted
      */
-    public byte[] exchange(Transaction txn, byte[] key, byte[] value) throws IOException;
+    public default byte[] exchange(Transaction txn, byte[] key, byte[] value) throws IOException {
+        Cursor c = newCursor(txn);
+        try {
+            c.find(key);
+            byte[] old = c.value();
+            c.store(value);
+            return old;
+        } finally {
+            c.reset();
+        }
+    }
 
     /**
-     * Associates a value with the given key, unless a corresponding value
-     * already exists. Equivalent to: <code>update(txn, key, null,
-     * value)</code>
+     * Associates a value with the given key, unless a corresponding value already
+     * exists. Equivalent to: <code>update(txn, key, null, value)</code>
      *
-     * <p>If the entry must be locked, ownership of the key instance is
-     * transferred. The key must not be modified after calling this method.
+     * <p>If the entry must be locked, ownership of the key instance is transferred. The key
+     * must not be modified after calling this method.
      *
      * @param txn optional transaction; pass null for auto-commit mode
      * @param key non-null key
@@ -118,11 +145,10 @@ public interface View {
     }
 
     /**
-     * Associates a value with the given key, but only if a corresponding value
-     * already exists.
+     * Associates a value with the given key, but only if a corresponding value already exists.
      *
-     * <p>If the entry must be locked, ownership of the key instance is
-     * transferred. The key must not be modified after calling this method.
+     * <p>If the entry must be locked, ownership of the key instance is transferred. The key
+     * must not be modified after calling this method.
      *
      * @param txn optional transaction; pass null for auto-commit mode
      * @param key non-null key
@@ -132,14 +158,26 @@ public interface View {
      * @throws IllegalArgumentException if transaction belongs to another database instance
      * @throws ViewConstraintException if entry is not permitted
      */
-    public boolean replace(Transaction txn, byte[] key, byte[] value) throws IOException;
+    public default boolean replace(Transaction txn, byte[] key, byte[] value) throws IOException {
+        Cursor c = newCursor(txn);
+        try {
+            c.autoload(false);
+            c.find(key);
+            if (c.value() == null) {
+                return false;
+            }
+            c.store(value);
+            return true;
+        } finally {
+            c.reset();
+        }
+    }
 
     /**
-     * Associates a value with the given key, but only if the given old value
-     * matches.
+     * Associates a value with the given key, but only if the given old value matches.
      *
-     * <p>If the entry must be locked, ownership of the key instance is
-     * transferred. The key must not be modified after calling this method.
+     * <p>If the entry must be locked, ownership of the key instance is transferred. The key
+     * must not be modified after calling this method.
      *
      * @param txn optional transaction; pass null for auto-commit mode
      * @param key non-null key
@@ -150,15 +188,28 @@ public interface View {
      * @throws IllegalArgumentException if transaction belongs to another database instance
      * @throws ViewConstraintException if entry is not permitted
      */
-    public boolean update(Transaction txn, byte[] key, byte[] oldValue, byte[] newValue)
-        throws IOException;
+    public default boolean update(Transaction txn, byte[] key, byte[] oldValue, byte[] newValue)
+        throws IOException
+    {
+        Cursor c = newCursor(txn);
+        try {
+            c.find(key);
+            if (!Arrays.equals(c.value(), oldValue)) {
+                return false;
+            }
+            c.store(newValue);
+            return true;
+        } finally {
+            c.reset();
+        }
+    }
 
     /**
-     * Unconditionally removes the entry associated with the given
-     * key. Equivalent to: <code>replace(txn, key, null)</code>
+     * Unconditionally removes the entry associated with the given key. Equivalent to:
+     * <code>replace(txn, key, null)</code>
      *
-     * <p>If the entry must be locked, ownership of the key instance is
-     * transferred. The key must not be modified after calling this method.
+     * <p>If the entry must be locked, ownership of the key instance is transferred. The key
+     * must not be modified after calling this method.
      *
      * @param txn optional transaction; pass null for auto-commit mode
      * @param key non-null key
@@ -172,11 +223,11 @@ public interface View {
     }
 
     /**
-     * Removes the entry associated with the given key, but only if the given
-     * value matches. Equivalent to: <code>update(txn, key, value, null)</code>
+     * Removes the entry associated with the given key, but only if the given value
+     * matches. Equivalent to: <code>update(txn, key, value, null)</code>
      *
-     * <p>If the entry must be locked, ownership of the key instance is
-     * transferred. The key must not be modified after calling this method.
+     * <p>If the entry must be locked, ownership of the key instance is transferred. The key
+     * must not be modified after calling this method.
      *
      * @param txn optional transaction; pass null for auto-commit mode
      * @param key non-null key
@@ -188,6 +239,31 @@ public interface View {
      */
     public default boolean remove(Transaction txn, byte[] key, byte[] value) throws IOException {
         return update(txn, key, value, null);
+    }
+
+    /**
+     * Explicitly acquire a shared lock for the given key, denying exclusive locks. Lock is
+     * retained until the end of the transaction or scope.
+     *
+     * <p>Transactions acquire locks automatically, and so use of this method is not
+     * required. Ownership of the key instance is transferred, and so the key must not be
+     * modified after calling this method.
+     *
+     * @param key non-null key to lock; instance is not cloned
+     * @param nanosTimeout maximum time to wait for lock; negative timeout is infinite
+     * @return {@link LockResult#INTERRUPTED INTERRUPTED}, {@link
+     * LockResult#TIMED_OUT_LOCK TIMED_OUT_LOCK}, {@link LockResult#ACQUIRED
+     * ACQUIRED}, {@link LockResult#OWNED_SHARED OWNED_SHARED}, {@link
+     * LockResult#OWNED_UPGRADABLE OWNED_UPGRADABLE}, or {@link
+     * LockResult#OWNED_EXCLUSIVE OWNED_EXCLUSIVE}
+     * @throws IllegalStateException if too many shared locks
+     * @throws DeadlockException if deadlock was detected after waiting full timeout
+     * @throws ViewConstraintException if key is not allowed
+     */
+    public default LockResult tryLockShared(Transaction txn, byte[] key, long nanosTimeout)
+        throws DeadlockException, ViewConstraintException
+    {
+        return ViewUtils.tryLock(txn, key, nanosTimeout, this::lockShared);
     }
 
     /**
@@ -219,6 +295,30 @@ public interface View {
      * modified after calling this method.
      *
      * @param key non-null key to lock; instance is not cloned
+     * @param nanosTimeout maximum time to wait for lock; negative timeout is infinite
+     * @return {@link LockResult#ILLEGAL ILLEGAL}, {@link
+     * LockResult#INTERRUPTED INTERRUPTED}, {@link LockResult#TIMED_OUT_LOCK
+     * TIMED_OUT_LOCK}, {@link LockResult#ACQUIRED ACQUIRED}, {@link
+     * LockResult#OWNED_UPGRADABLE OWNED_UPGRADABLE}, or {@link
+     * LockResult#OWNED_EXCLUSIVE OWNED_EXCLUSIVE}
+     * @throws DeadlockException if deadlock was detected after waiting full timeout
+     * @throws ViewConstraintException if key is not allowed
+     */
+    public default LockResult tryLockUpgradable(Transaction txn, byte[] key, long nanosTimeout)
+        throws DeadlockException, ViewConstraintException
+    {
+        return ViewUtils.tryLock(txn, key, nanosTimeout, this::lockUpgradable);
+    }
+
+    /**
+     * Explicitly acquire an upgradable lock for the given key, denying exclusive and
+     * additional upgradable locks. Lock is retained until the end of the transaction or scope.
+     *
+     * <p>Transactions acquire locks automatically, and so use of this method is not
+     * required. Ownership of the key instance is transferred, and so the key must not be
+     * modified after calling this method.
+     *
+     * @param key non-null key to lock; instance is not cloned
      * @return {@link LockResult#ACQUIRED ACQUIRED}, {@link LockResult#OWNED_UPGRADABLE
      * OWNED_UPGRADABLE}, or {@link LockResult#OWNED_EXCLUSIVE OWNED_EXCLUSIVE}
      * @throws LockFailureException if interrupted, timed out, or illegal upgrade
@@ -227,6 +327,30 @@ public interface View {
      */
     public LockResult lockUpgradable(Transaction txn, byte[] key)
         throws LockFailureException, ViewConstraintException;
+
+    /**
+     * Explicitly acquire an exclusive lock for the given key, denying any additional
+     * locks. Lock is retained until the end of the transaction or scope.
+     *
+     * <p>Transactions acquire locks automatically, and so use of this method is not
+     * required. Ownership of the key instance is transferred, and so the key must not be
+     * modified after calling this method.
+     *
+     * @param key non-null key to lock; instance is not cloned
+     * @param nanosTimeout maximum time to wait for lock; negative timeout is infinite
+     * @return {@link LockResult#ILLEGAL ILLEGAL}, {@link
+     * LockResult#INTERRUPTED INTERRUPTED}, {@link LockResult#TIMED_OUT_LOCK
+     * TIMED_OUT_LOCK}, {@link LockResult#ACQUIRED ACQUIRED}, {@link
+     * LockResult#UPGRADED UPGRADED}, or {@link LockResult#OWNED_EXCLUSIVE
+     * OWNED_EXCLUSIVE}
+     * @throws DeadlockException if deadlock was detected after waiting full timeout
+     * @throws ViewConstraintException if key is not allowed
+     */
+    public default LockResult tryLockExclusive(Transaction txn, byte[] key, long nanosTimeout)
+        throws DeadlockException, ViewConstraintException
+    {
+        return ViewUtils.tryLock(txn, key, nanosTimeout, this::lockExclusive);
+    }
 
     /**
      * Explicitly acquire an exclusive lock for the given key, denying any additional

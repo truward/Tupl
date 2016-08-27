@@ -217,7 +217,7 @@ class Utils extends org.cojen.tupl.io.Utils {
      * of the high key.
      */
     static byte[] midKey(byte[] low, byte[] high) {
-        return midKey(low, 0, low.length, high, 0, high.length);
+        return midKey(low, 0, low.length, high, 0);
     }
 
     /**
@@ -228,9 +228,7 @@ class Utils extends org.cojen.tupl.io.Utils {
      * <p>Method is used for internal node suffix compression. To disable, simply return a copy
      * of the high key.
      */
-    static byte[] midKey(byte[] low, int lowOff, int lowLen,
-                         byte[] high, int highOff, int highLen)
-    {
+    static byte[] midKey(byte[] low, int lowOff, int lowLen, byte[] high, int highOff) {
         for (int i=0; i<lowLen; i++) {
             byte lo = low[lowOff + i];
             byte hi = high[highOff + i];
@@ -806,5 +804,28 @@ class Utils extends org.cojen.tupl.io.Utils {
                 }
             }
         }
+    }
+
+    static void initCause(Throwable e, Throwable cause) {
+        if (e != null && cause != null && !cycleCheck(e, cause) && !cycleCheck(cause, e)) {
+            try {
+                e.initCause(cause);
+            } catch (Throwable e2) {
+            }
+        }
+    }
+
+    private static boolean cycleCheck(Throwable e, Throwable cause) {
+        for (int i=0; i<100; i++) {
+            if (e == cause) {
+                return true;
+            }
+            e = e.getCause();
+            if (e == null) {
+                return false;
+            }
+        }
+        // Cause chain is quite long, and so it probably has a cycle.
+        return true;
     }
 }

@@ -191,6 +191,8 @@ final class _LocalDatabase extends AbstractDatabase {
     private final _Node[] mNodeMapTable;
     private final Latch[] mNodeMapLatches;
 
+    final int mMaxKeySize;
+    final int mMaxEntrySize;
     final int mMaxFragmentedEntrySize;
 
     // Fragmented values which are transactionally deleted go here.
@@ -326,7 +328,7 @@ final class _LocalDatabase extends AbstractDatabase {
 
         mDurabilityMode = config.mDurabilityMode;
         mDefaultLockTimeoutNanos = config.mLockTimeoutNanos;
-        mLockManager = new _LockManager(config.mLockUpgradeRule, mDefaultLockTimeoutNanos);
+        mLockManager = new _LockManager(this, config.mLockUpgradeRule, mDefaultLockTimeoutNanos);
 
         // Initialize NodeMap, the primary cache of Nodes.
         {
@@ -605,6 +607,13 @@ final class _LocalDatabase extends AbstractDatabase {
                     mFragmentedTrash = new _FragmentedTrash(tree);
                 }
             }
+
+            // Key size is limited to ensure that internal nodes can hold at least two keys.
+            // Absolute maximum is dictated by key encoding, as described in _Node class.
+            mMaxKeySize = Math.min(16383, (pageSize >> 1) - 22);
+
+            // Limit maximum non-fragmented entry size to 0.75 of usable node size.
+            mMaxEntrySize = ((pageSize - _Node.TN_HEADER_SIZE) * 3) >> 2;
 
             // Limit maximum fragmented entry size to guarantee that 2 entries fit. Each also
             // requires 2 bytes for pointer and up to 3 bytes for value length field.
@@ -1234,7 +1243,7 @@ final class _LocalDatabase extends AbstractDatabase {
 
         long treeId = decodeLongBE(treeIdBytes, 0);
 
-        return newTreeInstance(treeId, treeIdBytes, name, loadTreeRoot(rootId));
+        return newTreeInstance(treeId, treeIdBytes, name, loadTreeRoot(treeId, rootId));
     }
 
     private class Deletion implements Runnable {
@@ -1654,10 +1663,6 @@ final class _LocalDatabase extends AbstractDatabase {
             stats.cachedPages += usageList.size();
         }
 
-        if (!mPageDb.isDurable() && stats.totalPages == 0) {
-            stats.totalPages = stats.cachedPages;
-        }
-
         return stats;
     }
 
@@ -1755,37 +1760,31 @@ final class _LocalDatabase extends AbstractDatabase {
             mCheckpointLock.unlock();
         }
 
-        if (!mPageDb.compactionScanFreeList()) {
-            mCheckpointLock.lock();
-            try {
-                mPageDb.compactionEnd();
-            } finally {
-                mCheckpointLock.unlock();
+        boolean completed = mPageDb.compactionScanFreeList();
+
+        if (completed) {
+            // Issue a checkpoint to ensure all dirty nodes are flushed out. This ensures that
+            // nodes can be moved out of the compaction zone by simply marking them dirty. If
+            // already dirty, they'll not be in the compaction zone unless compaction aborted.
+            checkpoint();
+
+            if (observer == null) {
+                observer = new CompactionObserver();
             }
-            return false;
-        }
 
-        // Issue a checkpoint to ensure all dirty nodes are flushed out. This ensures that
-        // nodes can be moved out of the compaction zone by simply marking them dirty. If
-        // already dirty, they'll not be in the compaction zone unless compaction aborted.
-        checkpoint();
+            final long highestNodeId = targetPageCount - 1;
+            final CompactionObserver fobserver = observer;
 
-        if (observer == null) {
-            observer = new CompactionObserver();
-        }
+            completed = scanAllIndexes((tree) -> {
+                return tree.compactTree(tree.observableView(), highestNodeId, fobserver);
+            });
 
-        final long highestNodeId = targetPageCount - 1;
-        final CompactionObserver fobserver = observer;
+            checkpoint(true, 0, 0);
 
-        boolean completed = scanAllIndexes((tree) -> {
-            return tree.compactTree(tree.observableView(), highestNodeId, fobserver);
-        });
-
-        checkpoint(true, 0, 0);
-
-        if (completed && mPageDb.compactionScanFreeList()) {
-            if (!mPageDb.compactionVerify() && mPageDb.compactionScanFreeList()) {
-                checkpoint(true, 0, 0);
+            if (completed && mPageDb.compactionScanFreeList()) {
+                if (!mPageDb.compactionVerify() && mPageDb.compactionScanFreeList()) {
+                    checkpoint(true, 0, 0);
+                }
             }
         }
 
@@ -1793,8 +1792,10 @@ final class _LocalDatabase extends AbstractDatabase {
         try {
             completed &= mPageDb.compactionEnd();
 
-            // If completed, then this allows file to shrink. Otherwise, it allows reclaimed
-            // reserved pages to be immediately usable.
+            // Reclaim reserved pages, but only after a checkpoint has been performed.
+            checkpoint(true, 0, 0);
+            mPageDb.compactionReclaim();
+            // Checkpoint again in order for reclaimed pages to be immediately available.
             checkpoint(true, 0, 0);
 
             if (completed) {
@@ -2183,30 +2184,16 @@ final class _LocalDatabase extends AbstractDatabase {
     }
 
     /**
+     * @param treeId pass zero if unknown or not applicable
      * @param rootId pass zero to create
      * @return unlatched and unevictable root node
      */
-    private _Node loadTreeRoot(final long rootId) throws IOException {
-        if (rootId != 0) {
-            // Check if root node is still around after tree was closed.
-            final _Node rootNode = nodeMapGet(rootId);
-            if (rootNode != null) {
-                rootNode.acquireShared();
-                try {
-                    if (rootId == rootNode.mId) {
-                        rootNode.makeUnevictable();
-                        return rootNode;
-                    }
-                } finally {
-                    rootNode.releaseShared();
-                }
-            }
-        }
+    private _Node loadTreeRoot(final long treeId, final long rootId) throws IOException {
+        if (rootId == 0) {
+            // Pass tree identifer to spread allocations around.
+            _Node rootNode = allocLatchedNode(treeId, _NodeUsageList.MODE_UNEVICTABLE);
 
-        final _Node rootNode = allocLatchedNode(rootId, _NodeUsageList.MODE_UNEVICTABLE);
-
-        try {
-            if (rootId == 0) {
+            try {
                 /*P*/ // [
                 // rootNode.asEmptyRoot();
                 /*P*/ // |
@@ -2218,20 +2205,41 @@ final class _LocalDatabase extends AbstractDatabase {
                     rootNode.asEmptyRoot();
                 }
                 /*P*/ // ]
-            } else {
+                return rootNode;
+            } finally {
+                rootNode.releaseExclusive();
+            }
+        } else {
+            // Check if root node is still around after tree was closed.
+            _Node rootNode = nodeMapGet(rootId);
+
+            if (rootNode != null) {
+                rootNode.acquireShared();
+                try {
+                    if (rootId == rootNode.mId) {
+                        rootNode.makeUnevictable();
+                        return rootNode;
+                    }
+                } finally {
+                    rootNode.releaseShared();
+                }
+            }
+
+            rootNode = allocLatchedNode(rootId, _NodeUsageList.MODE_UNEVICTABLE);
+
+            try {
                 try {
                     rootNode.read(this, rootId);
-                } catch (IOException e) {
-                    rootNode.makeEvictableNow();
-                    throw e;
+                } finally {
+                    rootNode.releaseExclusive();
                 }
                 nodeMapPut(rootNode);
+                return rootNode;
+            } catch (Throwable e) {
+                rootNode.makeEvictableNow();
+                throw e;
             }
-        } finally {
-            rootNode.releaseExclusive();
         }
-
-        return rootNode;
     }
 
     /**
@@ -2275,7 +2283,7 @@ final class _LocalDatabase extends AbstractDatabase {
             rootId = decodeLongLE(header, I_ROOT_PAGE_ID);
         }
 
-        return loadTreeRoot(rootId);
+        return loadTreeRoot(0, rootId);
     }
 
     private _Tree openInternalTree(long treeId, boolean create) throws IOException {
@@ -2300,7 +2308,7 @@ final class _LocalDatabase extends AbstractDatabase {
                 rootId = 0;
             }
 
-            _Node root = loadTreeRoot(rootId);
+            _Node root = loadTreeRoot(treeId, rootId);
 
             // Cannot call newTreeInstance because mRedoWriter isn't set yet.
             if (config != null && config.mReplManager != null) {
@@ -2472,7 +2480,7 @@ final class _LocalDatabase extends AbstractDatabase {
             long rootId = (rootIdBytes == null || rootIdBytes.length == 0) ? 0
                 : decodeLongLE(rootIdBytes, 0);
 
-            _Node root = loadTreeRoot(rootId);
+            _Node root = loadTreeRoot(treeId, rootId);
 
             if (name == null) {
                 tree = new _TempTree(this, treeId, treeIdBytes, name, root);
@@ -2883,13 +2891,50 @@ final class _LocalDatabase extends AbstractDatabase {
         }
 
         node = allocLatchedNode(nodeId);
-        /*P*/ // [
-        // node.type(TYPE_FRAGMENT);
-        /*P*/ // ]
-        readNode(node, nodeId);
-        node.downgrade();
+        node.mId = nodeId;
 
-        nodeMapPut(node);
+        // node is currently exclusively locked. Insert it into the node map so that no other
+        // thread tries to read it at the same time. If another thread sees it at this point
+        // (before it is actually read), until the node is read, that thread will block trying
+        // to get a shared lock.
+        while (true) {
+            _Node existing = nodeMapPutIfAbsent(node);
+            if (existing == null) {
+                break;
+            }
+
+            // Was already loaded, or is currently being loaded.
+            existing.acquireShared();
+            if (nodeId == existing.mId) {
+                // The item is already loaded. Throw away the node this thread was trying to
+                // allocate.
+                //
+                // Even though node is not currently in the node map, it could have been in
+                // there then got recycled. Other thread may still have a reference to it from
+                // when it was in the node map. So its id needs to be invalidated.
+                node.mId = 0;
+                // This releases the exclusive latch and makes the node immediately usable for
+                // new allocations.
+                node.unused();
+                return existing;
+            }
+            existing.releaseShared();
+        }
+
+        try {
+            /*P*/ // [
+            // node.type(TYPE_FRAGMENT);
+            /*P*/ // ]
+            readNode(node, nodeId);
+        } catch (Throwable t) {
+            // Something went wrong reading the node. Remove the node from the map, now that
+            // it definitely won't get read.
+            nodeMapRemove(node);
+            node.mId = 0;
+            node.releaseExclusive();
+            throw t;
+        }
+        node.downgrade();
 
         return node;
     }
@@ -2902,6 +2947,9 @@ final class _LocalDatabase extends AbstractDatabase {
      * @return node with exclusive latch held
      */
     _Node nodeMapLoadFragmentExclusive(long nodeId, boolean read) throws IOException {
+        // Very similar to the nodeMapLoadFragment method. It has comments which explains
+        // what's going on here. No point in duplicating that as well.
+
         _Node node = nodeMapGet(nodeId);
 
         if (node != null) {
@@ -2914,16 +2962,35 @@ final class _LocalDatabase extends AbstractDatabase {
         }
 
         node = allocLatchedNode(nodeId);
-        /*P*/ // [
-        // node.type(TYPE_FRAGMENT);
-        /*P*/ // ]
-        if (read) {
-            readNode(node, nodeId);
-        } else {
-            node.mId = nodeId;
+        node.mId = nodeId;
+
+        while (true) {
+            _Node existing = nodeMapPutIfAbsent(node);
+            if (existing == null) {
+                break;
+            }
+            existing.acquireExclusive();
+            if (nodeId == existing.mId) {
+                node.mId = 0;
+                node.unused();
+                return existing;
+            }
+            existing.releaseExclusive();
         }
 
-        nodeMapPut(node);
+        try {
+            /*P*/ // [
+            // node.type(TYPE_FRAGMENT);
+            /*P*/ // ]
+            if (read) {
+                readNode(node, nodeId);
+            }
+        } catch (Throwable t) {
+            nodeMapRemove(node);
+            node.mId = 0;
+            node.releaseExclusive();
+            throw t;
+        }
 
         return node;
     }
@@ -3210,7 +3277,7 @@ final class _LocalDatabase extends AbstractDatabase {
 
         try {
             if (oldId != 0) {
-                // FIXME: This can hang on I/O; release frame latch if deletePage would block?
+                // TODO: This can hang on I/O; release frame latch if deletePage would block?
                 // Then allow thread to block without node latch held.
                 mPageDb.deletePage(oldId);
                 nodeMapRemove(node, Long.hashCode(oldId));
@@ -3317,10 +3384,14 @@ final class _LocalDatabase extends AbstractDatabase {
             nodeMapRemove(node, Long.hashCode(id));
 
             try {
-                if (canRecycle) {
-                    deletePage(id, node.mCachedState);
-                } else if (id != 0) {
-                    mPageDb.deletePage(id);
+                if (id != 0) {
+                    if (canRecycle && node.mCachedState == mCommitState) {
+                        // Newly reserved page was never used, so recycle it.
+                        mPageDb.recyclePage(id);
+                    } else {
+                        // Old data must survive until after checkpoint.
+                        mPageDb.deletePage(id);
+                    }
                 }
             } catch (Throwable e) {
                 // Try to undo things.
@@ -3348,19 +3419,8 @@ final class _LocalDatabase extends AbstractDatabase {
         node.unused();
     }
 
-    /**
-     * Caller must hold commit lock.
-     */
-    void deletePage(long id, int cachedState) throws IOException {
-        if (id != 0) {
-            if (cachedState == mCommitState) {
-                // Newly reserved page was never used, so recycle it.
-                mPageDb.recyclePage(id);
-            } else {
-                // Old data must survive until after checkpoint.
-                mPageDb.deletePage(id);
-            }
-        }
+    final byte[] fragmentKey(byte[] key) throws IOException {
+        return fragment(key, key.length, mMaxKeySize);
     }
 
     /**

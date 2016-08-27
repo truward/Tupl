@@ -2473,9 +2473,7 @@ class TreeCursor implements CauseCloseable, Cursor {
         throws IOException
     {
         byte[] key = mKey;
-        if (key == null) {
-            throw new IllegalStateException("Cursor position is undefined");
-        }
+        ViewUtils.positionCheck(key);
 
         LockResult result;
         Locker locker;
@@ -2531,9 +2529,7 @@ class TreeCursor implements CauseCloseable, Cursor {
     @Override
     public void store(byte[] value) throws IOException {
         byte[] key = mKey;
-        if (key == null) {
-            throw new IllegalStateException("Cursor position is undefined");
-        }
+        ViewUtils.positionCheck(key);
 
         try {
             final LocalTransaction txn = mTxn;
@@ -2558,9 +2554,7 @@ class TreeCursor implements CauseCloseable, Cursor {
     @Override
     public void commit(byte[] value) throws IOException {
         byte[] key = mKey;
-        if (key == null) {
-            throw new IllegalStateException("Cursor position is undefined");
-        }
+        ViewUtils.positionCheck(key);
 
         try {
             final LocalTransaction txn = mTxn;
@@ -3046,9 +3040,7 @@ class TreeCursor implements CauseCloseable, Cursor {
      * NOT_LOADED as a side-effect.
      */
     final void storeFragmented(byte[] value) throws IOException {
-        if (mKey == null) {
-            throw new IllegalStateException("Cursor position is undefined");
-        }
+        ViewUtils.positionCheck(mKey);
         if (value == null) {
             throw new IllegalArgumentException("Value is null");
         }
@@ -3842,9 +3834,7 @@ class TreeCursor implements CauseCloseable, Cursor {
      */
     private CursorFrame leaf() {
         CursorFrame leaf = mLeaf;
-        if (leaf == null) {
-            throw new IllegalStateException("Cursor position is undefined");
-        }
+        ViewUtils.positionCheck(leaf);
         return leaf;
     }
 
@@ -3895,14 +3885,38 @@ class TreeCursor implements CauseCloseable, Cursor {
      */
     final Node finishSplitShared(final CursorFrame frame, Node node) throws IOException {
         doSplit: {
-            if (!node.tryUpgrade()) {
-                node.releaseShared();
-                node = frame.acquireExclusive();
-                if (node.mSplit == null) {
-                    break doSplit;
+            // In order to call finishSplit, the caller must hold an exclusive node lock, and
+            // a shared commit lock. At this point only a shared node lock is held.
+            //
+            // Following proper lock order, the shared commit lock should be obtained before
+            // the node lock. However, the code optimistically tries to get the shared commit
+            // lock, then upgrade the shared node lock to an exclusive node lock.
+            //
+            // If either of those steps fail, all locks are released then acquired in the
+            // proper order.
+            CommitLock commitLock = mTree.mDatabase.commitLock();
+            boolean commitLocked = commitLock.tryLock();
+            try {
+                if (!commitLocked || !node.tryUpgrade()) {
+                    node.releaseShared();
+
+                    if (commitLocked) {
+                        commitLock.unlock();
+                        commitLocked = false;
+                    }
+                    commitLock.lock();
+                    commitLocked = true;
+
+                    node = frame.acquireExclusive();
+                    if (node.mSplit == null) {
+                        break doSplit;
+                    }
                 }
+                node = mTree.finishSplit(frame, node);
+            } finally {
+                if (commitLocked)
+                    commitLock.unlock();
             }
-            node = mTree.finishSplit(frame, node);
         }
         node.downgrade();
         return node;

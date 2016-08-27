@@ -1,5 +1,5 @@
 /*
- *  Copyright 2015 Cojen.org
+ *  Copyright 2016 Cojen.org
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -16,25 +16,30 @@
 
 package org.cojen.tupl;
 
-import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.*;
 
 /**
- * Base class for any object which can own or acquire locks.
+ * 
  *
  * @author Brian S O'Neill
  */
-/*P*/
-class LockOwner extends AtomicInteger /* for hashCode */ {
-    // LockOwner is currently waiting to acquire this lock. Used for deadlock detection.
-    Lock mWaitingFor;
+public class CursorDefaultTest extends CursorTest {
+    public static void main(String[] args) throws Exception {
+        org.junit.runner.JUnitCore.main(CursorDefaultTest.class.getName());
+    }
 
     @Override
-    public final int hashCode() {
-        while (true) {
-            int hash = get();
-            if (hash != 0 || compareAndSet(0, hash = Utils.randomSeed())) {
-                return hash;
-            }
-        }
+    protected View openIndex(String name) throws Exception {
+        return new DefaultView(mDb.openIndex(name));
+    }
+
+    @Override
+    protected boolean verify(View ix) throws Exception {
+        return ((Index) (((DefaultView) ix).mSource)).verify(null);
+    }
+
+    @Override
+    protected TreeCursor treeCursor(Cursor c) {
+        return (TreeCursor) (((DefaultCursor) c).mSource);
     }
 }

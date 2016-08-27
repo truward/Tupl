@@ -59,9 +59,6 @@ class Tree implements View, Index {
     // object when the tree root changes.
     final Node mRoot;
 
-    final int mMaxKeySize;
-    final int mMaxEntrySize;
-
     Tree(LocalDatabase db, long id, byte[] idBytes, byte[] name, Node root) {
         mDatabase = db;
         mLockManager = db.mLockManager;
@@ -69,15 +66,6 @@ class Tree implements View, Index {
         mIdBytes = idBytes;
         mName = name;
         mRoot = root;
-
-        int pageSize = db.pageSize();
-
-        // Key size is limited to ensure that internal nodes can hold at least two keys.
-        // Absolute maximum is dictated by key encoding, as described in Node class.
-        mMaxKeySize = Math.min(16383, (pageSize >> 1) - 22);
-
-        // Limit maximum non-fragmented entry size to 0.75 of usable node size.
-        mMaxEntrySize = ((pageSize - Node.TN_HEADER_SIZE) * 3) >> 2;
     }
 
     final int pageSize() {
@@ -299,7 +287,11 @@ class Tree implements View, Index {
                     // Need to acquire the lock before loading. To prevent deadlock, a cursor
                     // frame must be bound and then the node latch can be released.
                     frame = new CursorFrame();
-                    frame.bind(node, midPos - node.searchVecStart());
+                    int pos = midPos - node.searchVecStart();
+                    if (node.mSplit != null) {
+                        pos = node.mSplit.adjustBindPosition(pos);
+                    }
+                    frame.bind(node, pos);
                     break search;
                 }
             }
@@ -313,7 +305,11 @@ class Tree implements View, Index {
             // Need to lock even if no value was found.
             frame = new CursorFrame();
             frame.mNotFoundKey = key;
-            frame.bind(node, ~(lowPos - node.searchVecStart()));
+            int pos = lowPos - node.searchVecStart();
+            if (node.mSplit != null) {
+                pos = node.mSplit.adjustBindPosition(pos);
+            }
+            frame.bind(node, ~pos);
             break search;
         } finally {
             node.releaseShared();
@@ -333,11 +329,14 @@ class Tree implements View, Index {
             try {
                 node = frame.acquireShared();
                 try {
-                    if (node.mSplit != null) {
-                        node = node.mSplit.selectNode(node, key);
-                    }
                     int pos = frame.mNodePos;
-                    return pos >= 0 ? node.retrieveLeafValue(pos) : null;
+                    if (pos < 0) {
+                        return null;
+                    } else if (node.mSplit == null) {
+                        return node.retrieveLeafValue(pos);
+                    } else {
+                        return node.mSplit.retrieveLeafValue(node, pos);
+                    }
                 } finally {
                     node.releaseShared();
                 }
@@ -390,8 +389,22 @@ class Tree implements View, Index {
     }
 
     @Override
+    public final LockResult tryLockShared(Transaction txn, byte[] key, long nanosTimeout)
+        throws DeadlockException
+    {
+        return check(txn).tryLockShared(mId, key, nanosTimeout);
+    }
+
+    @Override
     public final LockResult lockShared(Transaction txn, byte[] key) throws LockFailureException {
         return check(txn).lockShared(mId, key);
+    }
+
+    @Override
+    public final LockResult tryLockUpgradable(Transaction txn, byte[] key, long nanosTimeout)
+        throws DeadlockException
+    {
+        return check(txn).tryLockUpgradable(mId, key, nanosTimeout);
     }
 
     @Override
@@ -399,6 +412,13 @@ class Tree implements View, Index {
         throws LockFailureException
     {
         return check(txn).lockUpgradable(mId, key);
+    }
+
+    @Override
+    public final LockResult tryLockExclusive(Transaction txn, byte[] key, long nanosTimeout)
+        throws DeadlockException
+    {
+        return check(txn).tryLockExclusive(mId, key, nanosTimeout);
     }
 
     @Override
@@ -617,7 +637,7 @@ class Tree implements View, Index {
         TreeCursor cursor = new TreeCursor(this, Transaction.BOGUS);
         try {
             cursor.autoload(false);
-            cursor.first();
+            cursor.firstAny();
             int height = cursor.height();
             if (!observer.indexBegin(view, height)) {
                 cursor.reset();
@@ -995,6 +1015,11 @@ class Tree implements View, Index {
      * Caller must hold exclusive latch and it must verify that node has
      * split. Node latch is released if an exception is thrown.
      *
+     * The caller should also hold at least a shared commit lock, because this function tries
+     * to allocate pages, and the page db may try to acquire a shared commit lock. Since the
+     * commit lock is reentrant, if the caller already holds a shared commit lock, it
+     * guarantees the page db can acquire another shared commit lock.
+     *
      * @param frame bound cursor frame
      * @param node node which is bound to the frame, latched exclusively
      * @return replacement node, still latched
@@ -1096,10 +1121,6 @@ class Tree implements View, Index {
      */
     final boolean markDirty(Node node) throws IOException {
         return mDatabase.markDirty(this, node);
-    }
-
-    final byte[] fragmentKey(byte[] key) throws IOException {
-        return mDatabase.fragment(key, key.length, mMaxKeySize);
     }
 
     private class Primer {

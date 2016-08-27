@@ -422,7 +422,7 @@ final class _Node extends Latch implements _DatabaseAccess {
      * latch. Caller must ensure that child is not already loaded. If an exception is thrown,
      * parent and child latches are always released.
      *
-     * @param options descibed described by OPTION_* fields
+     * @param options described by OPTION_* fields
      * @return child node, possibly split
      */
     _Node loadChild(_LocalDatabase db, long childId, int options) throws IOException {
@@ -1543,7 +1543,7 @@ final class _Node extends Latch implements _DatabaseAccess {
             // Note: An optimized version wouldn't need to copy the whole key.
             return Utils.midKey(retrieveKeyAtLoc(lowPage, lowLoc), highKey);
         } else {
-            return p_midKeyLowPage(lowPage, lowLoc + 1, lowKeyLen + 1, highKey, 0, highKey.length);
+            return p_midKeyLowPage(lowPage, lowLoc + 1, lowKeyLen + 1, highKey, 0);
         }
     }
 
@@ -1560,8 +1560,7 @@ final class _Node extends Latch implements _DatabaseAccess {
             // Note: An optimized version wouldn't need to copy the whole key.
             return Utils.midKey(lowKey, retrieveKeyAtLoc(highPage, highLoc));
         } else {
-            return p_midKeyHighPage(lowKey, 0, lowKey.length,
-                                    highPage, highLoc + 1, highKeyLen + 1);
+            return p_midKeyHighPage(lowKey, 0, lowKey.length, highPage, highLoc + 1);
         }
     }
 
@@ -1588,11 +1587,10 @@ final class _Node extends Latch implements _DatabaseAccess {
         if (highKeyLen < 0) {
             // Note: An optimized version wouldn't need to copy the whole key.
             byte[] highKey = retrieveKeyAtLoc(highPage, highLoc);
-            return p_midKeyLowPage(lowPage, lowLoc, lowKeyLen, highKey, 0, highKey.length);
+            return p_midKeyLowPage(lowPage, lowLoc, lowKeyLen, highKey, 0);
         }
 
-        return p_midKeyLowHighPage(lowPage, lowLoc, lowKeyLen,
-                                   highPage, highLoc + 1, highKeyLen + 1);
+        return p_midKeyLowHighPage(lowPage, lowLoc, lowKeyLen, highPage, highLoc + 1);
     }
 
     /**
@@ -1930,12 +1928,14 @@ final class _Node extends Latch implements _DatabaseAccess {
     void insertLeafEntry(_CursorFrame frame, _Tree tree, int pos, byte[] okey, byte[] value)
         throws IOException
     {
+        final _LocalDatabase db = tree.mDatabase;
+
         byte[] akey = okey;
-        int encodedKeyLen = calculateAllowedKeyLength(tree, okey);
+        int encodedKeyLen = calculateAllowedKeyLength(db, okey);
 
         if (encodedKeyLen < 0) {
             // Key must be fragmented.
-            akey = tree.fragmentKey(okey);
+            akey = db.fragmentKey(okey);
             encodedKeyLen = 2 + akey.length;
         }
 
@@ -1943,10 +1943,9 @@ final class _Node extends Latch implements _DatabaseAccess {
             int encodedLen = encodedKeyLen + calculateLeafValueLength(value);
 
             int vfrag;
-            if (encodedLen <= tree.mMaxEntrySize) {
+            if (encodedLen <= db.mMaxEntrySize) {
                 vfrag = 0;
             } else {
-                _LocalDatabase db = tree.mDatabase;
                 value = db.fragment(value, value.length,
                                     db.mMaxFragmentedEntrySize - encodedKeyLen);
                 if (value == null) {
@@ -1986,12 +1985,14 @@ final class _Node extends Latch implements _DatabaseAccess {
     void insertBlankLeafEntry(_CursorFrame frame, _Tree tree, int pos, byte[] okey, long vlength)
         throws IOException
     {
+        final _LocalDatabase db = tree.mDatabase;
+
         byte[] akey = okey;
-        int encodedKeyLen = calculateAllowedKeyLength(tree, okey);
+        int encodedKeyLen = calculateAllowedKeyLength(db, okey);
 
         if (encodedKeyLen < 0) {
             // Key must be fragmented.
-            akey = tree.fragmentKey(okey);
+            akey = db.fragmentKey(okey);
             encodedKeyLen = 2 + akey.length;
         }
 
@@ -2001,12 +2002,11 @@ final class _Node extends Latch implements _DatabaseAccess {
 
             int vfrag;
             byte[] value;
-            if (longEncodedLen <= tree.mMaxEntrySize) {
+            if (longEncodedLen <= db.mMaxEntrySize) {
                 vfrag = 0;
                 value = new byte[(int) vlength];
                 encodedLen = (int) longEncodedLen;
             } else {
-                _LocalDatabase db = tree.mDatabase;
                 value = db.fragment(null, vlength, db.mMaxFragmentedEntrySize - encodedKeyLen);
                 if (value == null) {
                     throw new AssertionError();
@@ -2046,12 +2046,14 @@ final class _Node extends Latch implements _DatabaseAccess {
                                    _Tree tree, int pos, byte[] okey, byte[] value)
         throws IOException
     {
+        final _LocalDatabase db = tree.mDatabase;
+
         byte[] akey = okey;
-        int encodedKeyLen = calculateAllowedKeyLength(tree, okey);
+        int encodedKeyLen = calculateAllowedKeyLength(db, okey);
 
         if (encodedKeyLen < 0) {
             // Key must be fragmented.
-            akey = tree.fragmentKey(okey);
+            akey = db.fragmentKey(okey);
             encodedKeyLen = 2 + akey.length;
         }
 
@@ -2144,60 +2146,22 @@ final class _Node extends Latch implements _DatabaseAccess {
             int remaining = leftSpace + rightSpace - encodedLen - 2;
 
             if (garbage() > remaining) {
-                compact: {
-                    // Do full compaction and free up the garbage, or else node must be split.
+                // Do full compaction and free up the garbage, or else node must be split.
 
-                    if (garbage() + remaining < 0) {
-                        // _Node compaction won't make enough room, but attempt to rebalance
-                        // before splitting.
-
-                        _CursorFrame parentFrame;
-                        if (frame == null || (parentFrame = frame.mParentFrame) == null) {
-                            // No sibling nodes, so cannot rebalance.
-                            break compact;
-                        }
-
-                        // "Randomly" choose left or right node first.
-                        if ((mId & 1) == 0) {
-                            int result = tryRebalanceLeafLeft
-                                (tree, parentFrame, pos, encodedLen, -remaining);
-                            if (result == 0) {
-                                // First rebalance attempt failed.
-                                result = tryRebalanceLeafRight
-                                    (tree, parentFrame, pos, encodedLen, -remaining);
-                                if (result == 0) {
-                                    // Second rebalance attempt failed too, so split.
-                                    break compact;
-                                } else if (result > 0) {
-                                    return result;
-                                }
-                            } else if (result > 0) {
-                                return result;
-                            } else {
-                                pos += result;
-                            }
-                        } else {
-                            int result = tryRebalanceLeafRight
-                                (tree, parentFrame, pos, encodedLen, -remaining);
-                            if (result == 0) {
-                                // First rebalance attempt failed.
-                                result = tryRebalanceLeafLeft
-                                    (tree, parentFrame, pos, encodedLen, -remaining);
-                                if (result == 0) {
-                                    // Second rebalance attempt failed too, so split.
-                                    break compact;
-                                } else if (result > 0) {
-                                    return result;
-                                } else {
-                                    pos += result;
-                                }
-                            } else if (result > 0) {
-                                return result;
-                            }
-                        }
-                    }
-
+                if (garbage() + remaining >= 0) {
                     return compactLeaf(encodedLen, pos, true);
+                }
+
+                // _Node compaction won't make enough room, but attempt to rebalance
+                // before splitting.
+
+                _CursorFrame parentFrame;
+                if (frame != null && (parentFrame = frame.mParentFrame) != null) {
+                    int result = tryRebalanceLeaf(tree, parentFrame, pos, encodedLen, -remaining);
+                    if (result > 0) {
+                        // Rebalance worked.
+                        return result;
+                    }
                 }
 
                 // Determine max possible entry size allowed, accounting too for entry pointer,
@@ -2244,6 +2208,38 @@ final class _Node extends Latch implements _DatabaseAccess {
     }
 
     /**
+     * Attempt to make room in this node by moving entries to the left or right sibling
+     * node. First determines if moving entries to the sibling node is allowed and would free
+     * up enough space. Next, attempts to latch parent and child nodes without waiting,
+     * avoiding deadlocks.
+     *
+     * @param tree required
+     * @param parentFrame required
+     * @param pos position to insert into
+     * @param insertLen encoded length of entry to insert
+     * @param minAmount minimum amount of bytes to move to make room
+     * @return 0 if try failed, or entry location of re-used slot
+     */
+    private int tryRebalanceLeaf(_Tree tree, _CursorFrame parentFrame,
+                                 int pos, int insertLen, int minAmount)
+    {
+        int result;
+        // "Randomly" choose left or right node first.
+        if ((mId & 1) == 0) {
+            result = tryRebalanceLeafLeft(tree, parentFrame, pos, insertLen, minAmount);
+            if (result <= 0) {
+                result = tryRebalanceLeafRight(tree, parentFrame, pos, insertLen, minAmount);
+            }
+        } else {
+            result = tryRebalanceLeafRight(tree, parentFrame, pos, insertLen, minAmount);
+            if (result <= 0) {
+                result = tryRebalanceLeafLeft(tree, parentFrame, pos, insertLen, minAmount);
+            }
+        }
+        return result;
+    }
+
+    /**
      * Attempt to make room in this node by moving entries to the left sibling node. First
      * determines if moving entries to the left node is allowed and would free up enough space.
      * Next, attempts to latch parent and child nodes without waiting, avoiding deadlocks.
@@ -2253,8 +2249,7 @@ final class _Node extends Latch implements _DatabaseAccess {
      * @param pos position to insert into; this position cannot move left
      * @param insertLen encoded length of entry to insert
      * @param minAmount minimum amount of bytes to move to make room
-     * @return 0 if try failed, or entry location of re-used slot, or negative 2-based position
-     * decrement if no slot was found
+     * @return 0 if try failed, or entry location of re-used slot
      */
     private int tryRebalanceLeafLeft(_Tree tree, _CursorFrame parentFrame,
                                      int pos, int insertLen, int minAmount)
@@ -2337,7 +2332,7 @@ final class _Node extends Latch implements _DatabaseAccess {
                     int highPos = lastSearchVecLoc - searchVecStart();
                     newKey = midKey(highPos - 2, this, highPos);
                     // Only attempt rebalance if new key doesn't need to be fragmented.
-                    newKeyLen = calculateAllowedKeyLength(tree, newKey);
+                    newKeyLen = calculateAllowedKeyLength(tree.mDatabase, newKey);
                     if (newKeyLen > 0) {
                         parentPage = parent.mPage;
                         parentKeyLoc = p_ushortGetLE
@@ -2425,12 +2420,6 @@ final class _Node extends Latch implements _DatabaseAccess {
         left.releaseExclusive();
         parent.releaseExclusive();
 
-        /* Not possible unless aggressive compaction is allowed.
-        if (insertLoc == 0) {
-            return -lastPos;
-        }
-        */
-
         // Expand search vector for inserted entry and write pointer to the re-used slot.
         garbage(garbage() - insertLen);
         pos -= lastPos;
@@ -2451,7 +2440,7 @@ final class _Node extends Latch implements _DatabaseAccess {
      * @param pos position to insert into; this position cannot move right
      * @param insertLen encoded length of entry to insert
      * @param minAmount minimum amount of bytes to move to make room
-     * @return 0 if try failed, or entry location of re-used slot, or negative if no slot was found
+     * @return 0 if try failed, or entry location of re-used slot
      */
     private int tryRebalanceLeafRight(_Tree tree, _CursorFrame parentFrame,
                                       int pos, int insertLen, int minAmount)
@@ -2534,7 +2523,7 @@ final class _Node extends Latch implements _DatabaseAccess {
                     int highPos = firstSearchVecLoc - searchVecStart();
                     newKey = midKey(highPos - 2, this, highPos);
                     // Only attempt rebalance if new key doesn't need to be fragmented.
-                    newKeyLen = calculateAllowedKeyLength(tree, newKey);
+                    newKeyLen = calculateAllowedKeyLength(tree.mDatabase, newKey);
                     if (newKeyLen > 0) {
                         parentPage = parent.mPage;
                         parentKeyLoc = p_ushortGetLE
@@ -2627,12 +2616,6 @@ final class _Node extends Latch implements _DatabaseAccess {
 
         right.releaseExclusive();
         parent.releaseExclusive();
-
-        /* Not possible unless aggressive compaction is allowed.
-        if (insertLoc == 0) {
-            return -1;
-        }
-        */
 
         // Expand search vector for inserted entry and write pointer to the re-used slot.
         garbage(garbage() - insertLen);
@@ -3414,9 +3397,9 @@ final class _Node extends Latch implements _DatabaseAccess {
         if (vfrag != 0) {
             encodedLen = keyLen + calculateFragmentedValueLength(value);
         } else {
+            _LocalDatabase db = tree.mDatabase;
             encodedLen = keyLen + calculateLeafValueLength(value);
-            if (encodedLen > tree.mMaxEntrySize) {
-                _LocalDatabase db = tree.mDatabase;
+            if (encodedLen > db.mMaxEntrySize) {
                 value = db.fragment(value, value.length, db.mMaxFragmentedEntrySize - keyLen);
                 if (value == null) {
                     throw new AssertionError();
@@ -3456,7 +3439,7 @@ final class _Node extends Latch implements _DatabaseAccess {
 
                     // _Node is already split, and so value is too large.
                     if (vfrag != 0) {
-                        // FIXME: Can this happen?
+                        // TODO: Can this happen?
                         throw new DatabaseException("Fragmented entry doesn't fit");
                     }
                     _LocalDatabase db = tree.mDatabase;
@@ -4035,14 +4018,14 @@ final class _Node extends Latch implements _DatabaseAccess {
      * Calculate encoded key length, including header. Returns -1 if key is too large and must
      * be fragmented.
      */
-    private static int calculateAllowedKeyLength(_Tree tree, byte[] key) {
+    private static int calculateAllowedKeyLength(_LocalDatabase db, byte[] key) {
         int len = key.length - 1;
         if ((len & ~(SMALL_KEY_LIMIT - 1)) == 0) {
             // Always safe because minimum node size is 512 bytes.
             return len + 2;
         } else {
             len++;
-            return len > tree.mMaxKeySize ? -1 : len + 2;
+            return len > db.mMaxKeySize ? -1 : len + 2;
         }
     }
 
@@ -4609,7 +4592,7 @@ final class _Node extends Latch implements _DatabaseAccess {
             byte[] result = null;
             while (entryLoc < 0) {
                 if (vfrag != 0) {
-                    // FIXME: Can this happen?
+                    // TODO: Can this happen?
                     throw new DatabaseException("Fragmented entry doesn't fit");
                 }
                 _LocalDatabase db = tree.mDatabase;
@@ -5026,9 +5009,10 @@ final class _Node extends Latch implements _DatabaseAccess {
     private void setSplitKey(_Tree tree, _Split split, byte[] fullKey) throws IOException {
         byte[] actualKey = fullKey;
 
-        if (calculateAllowedKeyLength(tree, fullKey) < 0) {
+        _LocalDatabase db = tree.mDatabase;
+        if (calculateAllowedKeyLength(db, fullKey) < 0) {
             // Key must be fragmented.
-            actualKey = tree.fragmentKey(fullKey);
+            actualKey = db.fragmentKey(fullKey);
         }
 
         split.setKey(fullKey, actualKey);
