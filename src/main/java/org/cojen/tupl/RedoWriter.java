@@ -19,7 +19,7 @@ package org.cojen.tupl;
 import java.io.Flushable;
 import java.io.IOException;
 
-import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 
 import org.cojen.tupl.io.CauseCloseable;
 
@@ -147,6 +147,12 @@ abstract class RedoWriter implements CauseCloseable, ShutdownHook, Flushable {
     public synchronized void reset() throws IOException {
         writeOp(OP_RESET);
         mLastTxnId = 0;
+        writeTerminator();
+    }
+
+    public synchronized void resetTxnId(long txnId) throws IOException {
+        writeOp(OP_TXN_ID_RESET, txnId);
+        mLastTxnId = txnId;
         writeTerminator();
     }
 
@@ -286,7 +292,7 @@ abstract class RedoWriter implements CauseCloseable, ShutdownHook, Flushable {
     }
 
     public synchronized void nopRandom() throws IOException {
-        writeOp(OP_NOP_RANDOM, new Random().nextLong());
+        writeOp(OP_NOP_RANDOM, ThreadLocalRandom.current().nextLong());
         writeTerminator();
         flush();
     }
@@ -299,6 +305,14 @@ abstract class RedoWriter implements CauseCloseable, ShutdownHook, Flushable {
     public void flushSync(boolean metadata) throws IOException {
         flush();
         sync(metadata);
+    }
+
+    synchronized void flushCommit() throws IOException {
+        try {
+            doCommitFlush();
+        } catch (IOException e) {
+            throw rethrow(e, mCause);
+        }
     }
 
     @Override

@@ -44,10 +44,10 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Map;
-import java.util.Random;
 import java.util.Set;
 
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
@@ -201,11 +201,8 @@ final class _LocalDatabase extends AbstractDatabase {
     // Pre-calculated maximum capacities for inode levels.
     private final long[] mFragmentInodeLevelCaps;
 
-    private final Object mTxnIdLock = new Object();
-    // The following fields are guarded by mTxnIdLock.
-    private long mTxnId;
-    private _UndoLog mTopUndoLog;
-    private int mUndoLogCount;
+    // Stripe the transaction contexts, for improved concurrency.
+    private final _TransactionContext[] mTxnContexts;
 
     // Checkpoint lock is fair, to ensure that user checkpoint requests are not stalled for too
     // long by checkpoint thread.
@@ -331,8 +328,9 @@ final class _LocalDatabase extends AbstractDatabase {
         mLockManager = new _LockManager(this, config.mLockUpgradeRule, mDefaultLockTimeoutNanos);
 
         // Initialize NodeMap, the primary cache of Nodes.
+        final int procCount = Runtime.getRuntime().availableProcessors();
         {
-            int latches = Utils.roundUpPower2(Runtime.getRuntime().availableProcessors() * 16);
+            int latches = Utils.roundUpPower2(procCount * 16);
             int capacity = Utils.roundUpPower2(maxCache);
             if (capacity < 0) {
                 capacity = 0x40000000;
@@ -498,7 +496,11 @@ final class _LocalDatabase extends AbstractDatabase {
                     }
                 }
 
-                int stripes = roundUpPower2(Runtime.getRuntime().availableProcessors() * 4);
+                // Magic constant was determined emperically against the G1 collector. A higher
+                // constant increases memory thrashing.
+                long usedRate = Utils.roundUpPower2((long) Math.ceil(maxCache / 32768)) - 1;
+
+                int stripes = roundUpPower2(procCount * 4);
 
                 int stripeSize;
                 while (true) {
@@ -512,14 +514,14 @@ final class _LocalDatabase extends AbstractDatabase {
                 int rem = maxCache % stripes;
 
                 usageLists = new _NodeUsageList[stripes];
-  
+
                 for (int i=0; i<stripes; i++) {
                     int size = stripeSize;
                     if (rem > 0) {
                         size++;
                         rem--;
                     }
-                    usageLists[i] = new _NodeUsageList(this, size);
+                    usageLists[i] = new _NodeUsageList(this, usedRate, size);
                 }
 
                 stripeSize = minCache / stripes;
@@ -551,8 +553,12 @@ final class _LocalDatabase extends AbstractDatabase {
                                       duration, TimeUnit.SECONDS);
             }
 
-            int sparePageCount = Runtime.getRuntime().availableProcessors();
-            mSparePagePool = new _PagePool(mPageSize, sparePageCount);
+            mTxnContexts = new _TransactionContext[procCount * 4];
+            for (int i=0; i<mTxnContexts.length; i++) {
+                mTxnContexts[i] = new _TransactionContext(procCount);
+            };
+
+            mSparePagePool = new _PagePool(mPageSize, procCount);
 
             mCommitLock.acquireExclusive();
             try {
@@ -569,9 +575,9 @@ final class _LocalDatabase extends AbstractDatabase {
 
             // Cannot call newTreeInstance because mRedoWriter isn't set yet.
             if (config.mReplManager != null) {
-                mRegistry = new _TxnTree(this, _Tree.REGISTRY_ID, null, null, rootNode);
+                mRegistry = new _TxnTree(this, _Tree.REGISTRY_ID, null, rootNode);
             } else {
-                mRegistry = new _Tree(this, _Tree.REGISTRY_ID, null, null, rootNode);
+                mRegistry = new _Tree(this, _Tree.REGISTRY_ID, null, rootNode);
             }
 
             mOpenTreesLatch = new Latch();
@@ -585,9 +591,7 @@ final class _LocalDatabase extends AbstractDatabase {
                 mOpenTreesRefQueue = new ReferenceQueue<>();
             }
 
-            synchronized (mTxnIdLock) {
-                mTxnId = decodeLongLE(header, I_TRANSACTION_ID);
-            }
+            long txnId = decodeLongLE(header, I_TRANSACTION_ID);
 
             long redoNum = decodeLongLE(header, I_CHECKPOINT_NUMBER);
             long redoPos = decodeLongLE(header, I_REDO_POSITION);
@@ -608,8 +612,14 @@ final class _LocalDatabase extends AbstractDatabase {
                 }
             }
 
-            // Key size is limited to ensure that internal nodes can hold at least two keys.
-            // Absolute maximum is dictated by key encoding, as described in _Node class.
+            // Key size is limited to ensure that internal nodes and leaf nodes can hold at
+            // least two keys. All nodes have a 12-byte header, large keys have a 2-byte
+            // header, and each node entry has a 2-byte pointer to it. Internal nodes have an
+            // 8-byte field for each child pointer, and leaf nodes require at least 11 bytes to
+            // hold a fragmented value. The magic constant for internal nodes is (12 + 2 + 2 +
+            // 2 + 2 + 8 * 3) = 44, and half that is 22. Leaf node constant is (12 + 2 + 2 + 2
+            // + 2 + 11 * 2) = 42, and half that is 21. The internal node constant is more
+            // restrictive, and so that's what's used.
             mMaxKeySize = Math.min(16383, (pageSize >> 1) - 22);
 
             // Limit maximum non-fragmented entry size to 0.75 of usable node size.
@@ -689,11 +699,9 @@ final class _LocalDatabase extends AbstractDatabase {
                     // Avoid re-using transaction ids used by recovery.
                     redoTxnId = applier.mHighestTxnId;
                     if (redoTxnId != 0) {
-                        synchronized (mTxnIdLock) {
-                            // Subtract for modulo comparison.
-                            if (mTxnId == 0 || (redoTxnId - mTxnId) > 0) {
-                                mTxnId = redoTxnId;
-                            }
+                        // Subtract for modulo comparison.
+                        if (txnId == 0 || (redoTxnId - txnId) > 0) {
+                            txnId = redoTxnId;
                         }
                     }
 
@@ -735,6 +743,10 @@ final class _LocalDatabase extends AbstractDatabase {
 
                     recoveryComplete(recoveryStart);
                 }
+            }
+
+            for (_TransactionContext txnContext : mTxnContexts) {
+                txnContext.resetTransactionId(txnId++);
             }
 
             if (mBaseFile == null || openMode == OPEN_TEMP) {
@@ -905,7 +917,7 @@ final class _LocalDatabase extends AbstractDatabase {
 
         Index index;
 
-        mCommitLock.lock();
+        CommitLock.Shared shared = mCommitLock.acquireShared();
         try {
             if ((index = lookupIndexById(id)) != null) {
                 return index;
@@ -927,7 +939,7 @@ final class _LocalDatabase extends AbstractDatabase {
             DatabaseException.rethrowIfRecoverable(e);
             throw closeOnFailure(this, e);
         } finally {
-            mCommitLock.unlock();
+            shared.release();
         }
 
         if (index == null) {
@@ -1068,12 +1080,12 @@ final class _LocalDatabase extends AbstractDatabase {
             if (redoTxnId == 0 && (redo = txnRedoWriter()) != null) {
                 long commitPos;
 
-                mCommitLock.lock();
+                CommitLock.Shared shared = mCommitLock.acquireShared();
                 try {
                     commitPos = redo.renameIndex
                         (txn.txnId(), tree.mId, newName, mDurabilityMode.alwaysRedo());
                 } finally {
-                    mCommitLock.unlock();
+                    shared.release();
                 }
 
                 if (commitPos != 0) {
@@ -1140,13 +1152,23 @@ final class _LocalDatabase extends AbstractDatabase {
 
     /**
      * Called by _Tree.drop with root node latch held exclusively.
+     *
+     * @param shared commit lock held shared; always released by this method
      */
-    Runnable deleteTree(_Tree tree) throws IOException {
-        _Node root;
-        if ((!(tree instanceof _TempTree) && !moveToTrash(tree.mId, tree.mIdBytes))
-            || (root = tree.close(true, true)) == null)
-        {
-            // Handle concurrent delete attempt.
+    Runnable deleteTree(_Tree tree, CommitLock.Shared shared) throws IOException {
+        try {
+            if (!(tree instanceof _TempTree) && !moveToTrash(tree.mId, tree.mIdBytes)) {
+                // Handle concurrent delete attempt.
+                throw new ClosedIndexException();
+            }
+        } finally {
+            // Always release before calling close, which might require an exclusive lock.
+            shared.release();
+        }
+
+        _Node root = tree.close(true, true);
+        if (root == null) {
+            // Handle concurrent close attempt.
             throw new ClosedIndexException();
         }
 
@@ -1317,8 +1339,81 @@ final class _LocalDatabase extends AbstractDatabase {
     }
 
     @Override
-    public Index newTemporaryIndex() throws IOException {
-        return openTree(null, true);
+    public _Tree newTemporaryIndex() throws IOException {
+        CommitLock.Shared shared = mCommitLock.acquireShared();
+        try {
+            return newTemporaryTree(null);
+        } finally {
+            shared.release();
+        }
+    }
+
+    /**
+     * Caller must hold commit lock.
+     *
+     * @param root pass null to create an empty index; pass an unevictable node otherwise
+     */
+    _Tree newTemporaryTree(_Node root) throws IOException {
+        checkClosed();
+
+        // Cleanup before opening more trees.
+        cleanupUnreferencedTrees();
+
+        byte[] rootIdBytes;
+        if (root == null) {
+            rootIdBytes = EMPTY_BYTES;
+        } else {
+            rootIdBytes = new byte[8];
+            encodeLongLE(rootIdBytes, 0, root.mId);
+        }
+
+        long treeId;
+        byte[] treeIdBytes = new byte[8];
+
+        try {
+            do {
+                treeId = nextTreeId(true);
+                encodeLongBE(treeIdBytes, 0, treeId);
+            } while (!mRegistry.insert(Transaction.BOGUS, treeIdBytes, rootIdBytes));
+
+            byte[] idKey = newKey(KEY_TYPE_INDEX_ID, treeIdBytes);
+
+            // Register temporary index as trash, unreplicated.
+            Transaction createTxn = newNoRedoTransaction();
+            try {
+                byte[] trashIdKey = newKey(KEY_TYPE_TRASH_ID, treeIdBytes);
+                if (!mRegistryKeyMap.insert(createTxn, trashIdKey, new byte[1])) {
+                    throw new DatabaseException("Unable to register temporary index");
+                }
+                createTxn.commit();
+            } finally {
+                createTxn.reset();
+            }
+        } catch (Throwable e) {
+            try {
+                mRegistry.delete(Transaction.BOGUS, treeIdBytes);
+            } catch (Throwable e2) {
+                // Panic.
+                throw closeOnFailure(this, e);
+            }
+            throw e;
+        }
+
+        if (root == null) {
+            root = loadTreeRoot(treeId, 0);
+        }
+
+        _Tree tree = new _TempTree(this, treeId, treeIdBytes, root);
+        _TreeRef treeRef = new _TreeRef(tree, mOpenTreesRefQueue);
+
+        mOpenTreesLatch.acquireExclusive();
+        try {
+            mOpenTreesById.insert(treeId).value = treeRef;
+        } finally {
+            mOpenTreesLatch.releaseExclusive();
+        }
+
+        return tree;
     }
 
     @Override
@@ -1384,69 +1479,10 @@ final class _LocalDatabase extends AbstractDatabase {
     }
 
     /**
-     * Caller must hold commit lock. This ensures that highest transaction id
-     * is persisted correctly by checkpoint.
+     * Called by transaction constructor after hash code has been assigned.
      */
-    void register(_UndoLog undo) {
-        synchronized (mTxnIdLock) {
-            _UndoLog top = mTopUndoLog;
-            if (top != null) {
-                undo.mPrev = top;
-                top.mNext = undo;
-            }
-            mTopUndoLog = undo;
-            mUndoLogCount++;
-        }
-    }
-
-    /**
-     * To be called only by transaction instances, and caller must hold commit lock. The commit
-     * lock ensures that highest transaction id is persisted correctly by checkpoint.
-     *
-     * @return positive non-zero transaction id
-     */
-    long nextTransactionId() {
-        long txnId;
-        {
-            synchronized (mTxnIdLock) {
-                txnId = ++mTxnId;
-            }
-
-            if (txnId <= 0) {
-                // Improbably, the transaction identifier has wrapped around. Vend positive
-                // identifiers, except for non-replicated transactions.
-                synchronized (mTxnIdLock) {
-                    txnId = ++mTxnId;
-                    if (txnId <= 0) {
-                        mTxnId = txnId = 1;
-                    }
-                }
-            }
-        }
-
-        return txnId;
-    }
-
-    /**
-     * Should only be called after all log entries have been truncated or rolled back. Caller
-     * does not need to hold db commit lock.
-     */
-    void unregister(_UndoLog log) {
-        synchronized (mTxnIdLock) {
-            _UndoLog prev = log.mPrev;
-            _UndoLog next = log.mNext;
-            if (prev != null) {
-                prev.mNext = next;
-                log.mPrev = null;
-            }
-            if (next != null) {
-                next.mPrev = prev;
-                log.mNext = null;
-            } else if (log == mTopUndoLog) {
-                mTopUndoLog = prev;
-            }
-            mUndoLogCount--;
-        }
+    _TransactionContext selectTransactionContext(_LocalTransaction txn) {
+        return mTxnContexts[(txn.hashCode() & 0x7fffffff) % mTxnContexts.length];
     }
 
     @Override
@@ -1631,7 +1667,7 @@ final class _LocalDatabase extends AbstractDatabase {
 
         stats.pageSize = mPageSize;
 
-        mCommitLock.lock();
+        CommitLock.Shared shared = mCommitLock.acquireShared();
         try {
             long cursorCount = 0;
             int openTreesCount = 0;
@@ -1651,12 +1687,11 @@ final class _LocalDatabase extends AbstractDatabase {
 
             stats.lockCount = mLockManager.numLocksHeld();
 
-            synchronized (mTxnIdLock) {
-                stats.txnCount = mUndoLogCount;
-                stats.txnsCreated = mTxnId;
+            for (_TransactionContext txnContext : mTxnContexts) {
+                txnContext.addStats(stats);
             }
         } finally {
-            mCommitLock.unlock();
+            shared.release();
         }
 
         for (_NodeUsageList usageList : mUsageLists) {
@@ -1812,6 +1847,9 @@ final class _LocalDatabase extends AbstractDatabase {
     @Override
     public boolean verify(VerificationObserver observer) throws IOException {
         // TODO: Verify free lists.
+        if (false) {
+            mPageDb.scanFreeList(id -> System.out.println(id));
+        }
 
         if (observer == null) {
             observer = new VerificationObserver();
@@ -1923,12 +1961,12 @@ final class _LocalDatabase extends AbstractDatabase {
                 if (!mClosed) {
                     checkpoint(true, 0, 0);
                     if (c != null) {
-                        ct = c.close();
+                        ct = c.close(cause);
                     }
                 }
             } else {
                 if (c != null) {
-                    ct = c.close();
+                    ct = c.close(cause);
                 }
 
                 // Wait for any in-progress checkpoint to complete.
@@ -2022,11 +2060,12 @@ final class _LocalDatabase extends AbstractDatabase {
                     mDirtyList.delete(this);
                 }
 
-                synchronized (mTxnIdLock) {
-                    for (_UndoLog log = mTopUndoLog; log != null; log = log.mPrev) {
-                        log.delete();
+                if (mTxnContexts != null) {
+                    for (_TransactionContext txnContext : mTxnContexts) {
+                        if (txnContext != null) {
+                            txnContext.deleteUndoLogs();
+                        }
                     }
-                    mTopUndoLog = null;
                 }
 
                 nodeMapDeleteAll();
@@ -2135,12 +2174,12 @@ final class _LocalDatabase extends AbstractDatabase {
                 // for the deletion task to be started immediately. The redo log still contains
                 // a commit operation, which is redundant and harmless.
 
-                mCommitLock.lock();
+                CommitLock.Shared shared = mCommitLock.acquireShared();
                 try {
                     commitPos = redo.deleteIndex
                         (txn.txnId(), treeId, mDurabilityMode.alwaysRedo());
                 } finally {
-                    mCommitLock.unlock();
+                    shared.release();
                 }
 
                 if (commitPos != 0) {
@@ -2168,10 +2207,15 @@ final class _LocalDatabase extends AbstractDatabase {
     void removeFromTrash(_Tree tree, _Node root) throws IOException {
         byte[] trashIdKey = newKey(KEY_TYPE_TRASH_ID, tree.mIdBytes);
 
-        mCommitLock.lock();
+        CommitLock.Shared shared = mCommitLock.acquireShared();
         try {
             if (root != null) {
                 root.acquireExclusive();
+                if (root.mPage == p_closedTreePage()) {
+                    // Database has been closed.
+                    root.releaseExclusive();
+                    return;
+                }
                 deleteNode(root);
             }
             mRegistryKeyMap.delete(Transaction.BOGUS, trashIdKey);
@@ -2179,7 +2223,7 @@ final class _LocalDatabase extends AbstractDatabase {
         } catch (Throwable e) {
             throw closeOnFailure(this, e);
         } finally {
-            mCommitLock.unlock();
+            shared.release();
         }
     }
 
@@ -2293,7 +2337,7 @@ final class _LocalDatabase extends AbstractDatabase {
     private _Tree openInternalTree(long treeId, boolean create, DatabaseConfig config)
         throws IOException
     {
-        mCommitLock.lock();
+        CommitLock.Shared shared = mCommitLock.acquireShared();
         try {
             byte[] treeIdBytes = new byte[8];
             encodeLongBE(treeIdBytes, 0, treeId);
@@ -2312,27 +2356,33 @@ final class _LocalDatabase extends AbstractDatabase {
 
             // Cannot call newTreeInstance because mRedoWriter isn't set yet.
             if (config != null && config.mReplManager != null) {
-                return new _TxnTree(this, treeId, treeIdBytes, null, root);
+                return new _TxnTree(this, treeId, treeIdBytes, root);
             }
 
             return newTreeInstance(treeId, treeIdBytes, null, root);
         } finally {
-            mCommitLock.unlock();
+            shared.release();
         }
     }
 
+    /**
+     * @param name required (cannot be null)
+     */
     private _Tree openTree(byte[] name, boolean create) throws IOException {
         return openTree(null, name, create);
     }
 
+    /**
+     * @param name required (cannot be null)
+     */
     private _Tree openTree(Transaction findTxn, byte[] name, boolean create) throws IOException {
         _Tree tree = quickFindIndex(name);
         if (tree == null) {
-            mCommitLock.lock();
+            CommitLock.Shared shared = mCommitLock.acquireShared();
             try {
                 tree = doOpenTree(findTxn, name, create);
             } finally {
-                mCommitLock.unlock();
+                shared.release();
             }
         }
         return tree;
@@ -2340,18 +2390,17 @@ final class _LocalDatabase extends AbstractDatabase {
 
     /**
      * Caller must hold commit lock.
+     *
+     * @param name required (cannot be null)
      */
     private _Tree doOpenTree(Transaction findTxn, byte[] name, boolean create) throws IOException {
         checkClosed();
 
-        // Cleaup before opening more trees.
+        // Cleanup before opening more trees.
         cleanupUnreferencedTrees();
 
-        byte[] nameKey = null, treeIdBytes = null;
-        if (name != null) {
-            nameKey = newKey(KEY_TYPE_INDEX_NAME, name);
-            treeIdBytes = mRegistryKeyMap.load(findTxn, nameKey);
-        }
+        byte[] nameKey = newKey(KEY_TYPE_INDEX_NAME, name);
+        byte[] treeIdBytes = mRegistryKeyMap.load(findTxn, nameKey);
 
         long treeId;
         // Is non-null if tree was created.
@@ -2373,14 +2422,12 @@ final class _LocalDatabase extends AbstractDatabase {
 
             mOpenTreesLatch.acquireExclusive();
             try {
-                if (nameKey != null) {
-                    treeIdBytes = mRegistryKeyMap.load(null, nameKey);
-                    if (treeIdBytes != null) {
-                        // Another thread created it.
-                        idKey = null;
-                        treeId = decodeLongBE(treeIdBytes, 0);
-                        break create;
-                    }
+                treeIdBytes = mRegistryKeyMap.load(null, nameKey);
+                if (treeIdBytes != null) {
+                    // Another thread created it.
+                    idKey = null;
+                    treeId = decodeLongBE(treeIdBytes, 0);
+                    break create;
                 }
 
                 treeIdBytes = new byte[8];
@@ -2391,7 +2438,7 @@ final class _LocalDatabase extends AbstractDatabase {
                 try {
                     do {
                         critical = false;
-                        treeId = nextTreeId(name == null);
+                        treeId = nextTreeId(false);
                         encodeLongBE(treeIdBytes, 0, treeId);
                         critical = true;
                     } while (!mRegistry.insert(Transaction.BOGUS, treeIdBytes, EMPTY_BYTES));
@@ -2401,27 +2448,18 @@ final class _LocalDatabase extends AbstractDatabase {
                     try {
                         idKey = newKey(KEY_TYPE_INDEX_ID, treeIdBytes);
 
-                        if (name == null) {
-                            // Register temporary index as trash, unreplicated.
-                            createTxn = newNoRedoTransaction();
-                            byte[] trashIdKey = newKey(KEY_TYPE_TRASH_ID, treeIdBytes);
-                            if (!mRegistryKeyMap.insert(createTxn, trashIdKey, new byte[1])) {
-                                throw new DatabaseException("Unable to register temporary index");
-                            }
+                        if (mRedoWriter instanceof _ReplRedoController) {
+                            // Confirmation is required when replicated.
+                            createTxn = newTransaction(DurabilityMode.SYNC);
                         } else {
-                            if (mRedoWriter instanceof _ReplRedoController) {
-                                // Confirmation is required when replicated.
-                                createTxn = newTransaction(DurabilityMode.SYNC);
-                            } else {
-                                createTxn = newAlwaysRedoTransaction();
-                            }
+                            createTxn = newAlwaysRedoTransaction();
+                        }
 
-                            if (!mRegistryKeyMap.insert(createTxn, idKey, name)) {
-                                throw new DatabaseException("Unable to insert index id");
-                            }
-                            if (!mRegistryKeyMap.insert(createTxn, nameKey, treeIdBytes)) {
-                                throw new DatabaseException("Unable to insert index name");
-                            }
+                        if (!mRegistryKeyMap.insert(createTxn, idKey, name)) {
+                            throw new DatabaseException("Unable to insert index id");
+                        }
+                        if (!mRegistryKeyMap.insert(createTxn, nameKey, treeIdBytes)) {
+                            throw new DatabaseException("Unable to insert index name");
                         }
                     } catch (Throwable e) {
                         critical = true;
@@ -2482,19 +2520,12 @@ final class _LocalDatabase extends AbstractDatabase {
 
             _Node root = loadTreeRoot(treeId, rootId);
 
-            if (name == null) {
-                tree = new _TempTree(this, treeId, treeIdBytes, name, root);
-            } else {
-                tree = newTreeInstance(treeId, treeIdBytes, name, root);
-            }
-
+            tree = newTreeInstance(treeId, treeIdBytes, name, root);
             _TreeRef treeRef = new _TreeRef(tree, mOpenTreesRefQueue);
 
             mOpenTreesLatch.acquireExclusive();
             try {
-                if (name != null) {
-                    mOpenTrees.put(name, treeRef);
-                }
+                mOpenTrees.put(name, treeRef);
                 mOpenTreesById.insert(treeId).value = treeRef;
             } finally {
                 mOpenTreesLatch.releaseExclusive();
@@ -2506,9 +2537,7 @@ final class _LocalDatabase extends AbstractDatabase {
                 // Rollback create of new tree.
                 try {
                     mRegistryKeyMap.delete(null, idKey);
-                    if (nameKey != null) {
-                        mRegistryKeyMap.delete(null, nameKey);
-                    }
+                    mRegistryKeyMap.delete(null, nameKey);
                     mRegistry.delete(Transaction.BOGUS, treeIdBytes);
                 } catch (Throwable e2) {
                     // Ignore.
@@ -2521,13 +2550,16 @@ final class _LocalDatabase extends AbstractDatabase {
     }
 
     private _Tree newTreeInstance(long id, byte[] idBytes, byte[] name, _Node root) {
+        _Tree tree;
         if (mRedoWriter instanceof _ReplRedoWriter) {
             // Always need an explcit transaction when using auto-commit, to ensure that
             // rollback is possible.
-            return new _TxnTree(this, id, idBytes, name, root);
+            tree = new _TxnTree(this, id, idBytes, root);
         } else {
-            return new _Tree(this, id, idBytes, name, root);
+            tree = new _Tree(this, id, idBytes, root);
         }
+        tree.mName = name;
+        return tree;
     }
 
     private long nextTreeId(boolean temporary) throws IOException {
@@ -2551,7 +2583,7 @@ final class _LocalDatabase extends AbstractDatabase {
 
                 if (treeIdMaskBytes == null) {
                     treeIdMaskBytes = new byte[8];
-                    new Random().nextBytes(treeIdMaskBytes);
+                    ThreadLocalRandom.current().nextBytes(treeIdMaskBytes);
                     mRegistryKeyMap.store(txn, key, treeIdMaskBytes);
                 }
 
@@ -2587,13 +2619,10 @@ final class _LocalDatabase extends AbstractDatabase {
     }
 
     /**
+     * @param name required (cannot be null)
      * @return null if not found
      */
     private _Tree quickFindIndex(byte[] name) throws IOException {
-        if (name == null) {
-            return null;
-        }
-
         _TreeRef treeRef;
         mOpenTreesLatch.acquireShared();
         try {
@@ -2884,7 +2913,7 @@ final class _LocalDatabase extends AbstractDatabase {
         if (node != null) {
             node.acquireShared();
             if (nodeId == node.mId) {
-                node.used();
+                node.used(ThreadLocalRandom.current());
                 return node;
             }
             node.releaseShared();
@@ -2955,7 +2984,7 @@ final class _LocalDatabase extends AbstractDatabase {
         if (node != null) {
             node.acquireExclusive();
             if (nodeId == node.mId) {
-                node.used();
+                node.used(ThreadLocalRandom.current());
                 return node;
             }
             node.releaseExclusive();
@@ -3096,12 +3125,12 @@ final class _LocalDatabase extends AbstractDatabase {
 
             checkClosed();
 
-            mCommitLock.lock();
+            CommitLock.Shared shared = mCommitLock.acquireShared();
             try {
                 // Try to free up nodes from unreferenced trees.
                 cleanupUnreferencedTrees();
             } finally {
-                mCommitLock.unlock();
+                shared.release();
             }
         }
 
@@ -3133,7 +3162,7 @@ final class _LocalDatabase extends AbstractDatabase {
 
         /*P*/ // [|
         if (mFullyMapped) {
-            node.mPage = mPageDb.directPagePointer(node.mId);
+            node.mPage = mPageDb.dirtyPage(node.mId);
         }
         /*P*/ // ]
 
@@ -3157,14 +3186,21 @@ final class _LocalDatabase extends AbstractDatabase {
     /**
      * Caller must hold commit lock and any latch on node.
      */
+    boolean isMutable(_Node node) {
+        return node.mCachedState == mCommitState && node.mId > 1;
+    }
+
+    /**
+     * Caller must hold commit lock and any latch on node.
+     */
     boolean shouldMarkDirty(_Node node) {
         return node.mCachedState != mCommitState && node.mId >= 0;
     }
 
     /**
-     * Caller must hold commit lock and exclusive latch on node. Method does
-     * nothing if node is already dirty. Latch is never released by this method,
-     * even if an exception is thrown.
+     * Mark a tree node as dirty. Caller must hold commit lock and exclusive latch on
+     * node. Method does nothing if node is already dirty. Latch is never released by this
+     * method, even if an exception is thrown.
      *
      * @return true if just made dirty and id changed
      */
@@ -3178,9 +3214,9 @@ final class _LocalDatabase extends AbstractDatabase {
     }
 
     /**
-     * Caller must hold commit lock and exclusive latch on node. Method does
-     * nothing if node is already dirty. Latch is never released by this method,
-     * even if an exception is thrown.
+     * Mark a fragment node as dirty. Caller must hold commit lock and exclusive latch on
+     * node. Method does nothing if node is already dirty. Latch is never released by this
+     * method, even if an exception is thrown.
      *
      * @return true if just made dirty and id changed
      */
@@ -3219,11 +3255,11 @@ final class _LocalDatabase extends AbstractDatabase {
     }
 
     /**
-     * Caller must hold commit lock and exclusive latch on node. Method does
-     * nothing if node is already dirty. Latch is never released by this method,
-     * even if an exception is thrown.
+     * Mark an unmapped node as dirty. Caller must hold commit lock and exclusive latch on
+     * node. Method does nothing if node is already dirty. Latch is never released by this
+     * method, even if an exception is thrown.
      */
-    void markUndoLogDirty(_Node node) throws IOException {
+    void markUnmappedDirty(_Node node) throws IOException {
         if (node.mCachedState != mCommitState) {
             node.write(mPageDb);
 
@@ -3315,7 +3351,7 @@ final class _LocalDatabase extends AbstractDatabase {
         /*P*/ // [|
         if (mFullyMapped) {
             if (node.mPage == p_nonTreePage()) {
-                node.mPage = mPageDb.directPagePointer(newId);
+                node.mPage = mPageDb.dirtyPage(newId);
                 node.asEmptyRoot();
             } else if (node.mPage != p_closedTreePage()) {
                 node.mPage = mPageDb.copyPage(node.mId, newId); // copy on write
@@ -3339,7 +3375,12 @@ final class _LocalDatabase extends AbstractDatabase {
      * Caller must hold commit lock and exclusive latch on node. This method
      * should only be called for nodes whose existing data is not needed.
      */
-    void redirty(_Node node) {
+    void redirty(_Node node) throws IOException {
+        /*P*/ // [|
+        if (mFullyMapped) {
+            mPageDb.dirtyPage(node.mId);
+        }
+        /*P*/ // ]
         mDirtyList.add(node, mCommitState);
     }
 
@@ -4276,43 +4317,49 @@ final class _LocalDatabase extends AbstractDatabase {
                 p_longPutLE(header, hoff + I_CHECKPOINT_NUMBER, redoNum);
                 p_longPutLE(header, hoff + I_REDO_TXN_ID, redoTxnId);
                 p_longPutLE(header, hoff + I_REDO_POSITION, redoPos);
-
-                p_longPutLE(header, hoff + I_REPL_ENCODING,
-                            mRedoWriter == null ? 0 : mRedoWriter.encoding());
+                p_longPutLE(header, hoff + I_REPL_ENCODING, redo == null ? 0 : redo.encoding());
 
                 // TODO: I don't like all this activity with exclusive commit
                 // lock held. _UndoLog can be refactored to store into a special
                 // _Tree, but this requires more features to be added to _Tree
                 // first. Specifically, large values and appending to them.
 
-                final long txnId;
+                long txnId = 0;
                 final long masterUndoLogId;
 
-                synchronized (mTxnIdLock) {
-                    txnId = mTxnId;
+                if (resume) {
+                    masterUndoLogId = masterUndoLog == null ? 0 : masterUndoLog.topNodeId();
+                } else {
+                    byte[] workspace = null;
 
-                    if (resume) {
-                        masterUndoLogId = masterUndoLog == null ? 0 : masterUndoLog.topNodeId();
-                    } else {
-                        int count = mUndoLogCount;
-                        if (count == 0) {
-                            masterUndoLogId = 0;
-                        } else {
-                            masterUndoLog = new _UndoLog(this, 0);
-                            byte[] workspace = null;
-                            for (_UndoLog log = mTopUndoLog; log != null; log = log.mPrev) {
-                                workspace = log.writeToMaster(masterUndoLog, workspace);
+                    for (_TransactionContext txnContext : mTxnContexts) {
+                        txnContext.acquireShared();
+                        try {
+                            txnId = txnContext.maxTransactionId(txnId);
+
+                            if (txnContext.hasUndoLogs()) {
+                                if (masterUndoLog == null) {
+                                    masterUndoLog = new _UndoLog(this, 0);
+                                }
+                                workspace = txnContext.writeToMaster(masterUndoLog, workspace);
                             }
-                            masterUndoLogId = masterUndoLog.topNodeId();
-                            if (masterUndoLogId == 0) {
-                                // Nothing was actually written to the log.
-                                masterUndoLog = null;
-                            }
+                        } finally {
+                            txnContext.releaseShared();
                         }
-
-                        // Stash it to resume after an aborted checkpoint.
-                        mCommitMasterUndoLog = masterUndoLog;
                     }
+
+                    if (masterUndoLog == null) {
+                        masterUndoLogId = 0;
+                    } else {
+                        masterUndoLogId = masterUndoLog.topNodeId();
+                        if (masterUndoLogId == 0) {
+                            // Nothing was actually written to the log.
+                            masterUndoLog = null;
+                        }
+                    }
+
+                    // Stash it to resume after an aborted checkpoint.
+                    mCommitMasterUndoLog = masterUndoLog;
                 }
 
                 p_longPutLE(header, hoff + I_TRANSACTION_ID, txnId);
@@ -4347,13 +4394,13 @@ final class _LocalDatabase extends AbstractDatabase {
             if (masterUndoLog != null) {
                 // Delete the master undo log, which won't take effect until
                 // the next checkpoint.
-                mCommitLock.lock();
+                CommitLock.Shared shared = mCommitLock.acquireShared();
                 try {
                     if (!mClosed) {
-                        masterUndoLog.doTruncate(mCommitLock, false);
+                        shared = masterUndoLog.doTruncate(mCommitLock, shared, false);
                     }
                 } finally {
-                    mCommitLock.unlock();
+                    shared.release();
                 }
             }
 

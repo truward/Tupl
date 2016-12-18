@@ -35,7 +35,7 @@ final class _LockManager {
     // into _Lock.mLockCount field, which is why the numbers seem a bit weird.
     static final int TYPE_SHARED = 1, TYPE_UPGRADABLE = 0x80000000, TYPE_EXCLUSIVE = ~0;
 
-    private final WeakReference<Database> mDatabaseRef;
+    final WeakReference<_LocalDatabase> mDatabaseRef;
 
     final LockUpgradeRule mDefaultLockUpgradeRule;
     final long mDefaultTimeoutNanos;
@@ -48,11 +48,11 @@ final class _LockManager {
     /**
      * @param db optional; used by _DeadlockDetector to resolve index names
      */
-    _LockManager(Database db, LockUpgradeRule lockUpgradeRule, long timeoutNanos) {
+    _LockManager(_LocalDatabase db, LockUpgradeRule lockUpgradeRule, long timeoutNanos) {
         this(db, lockUpgradeRule, timeoutNanos, Runtime.getRuntime().availableProcessors() * 16);
     }
 
-    private _LockManager(Database db, LockUpgradeRule lockUpgradeRule, long timeoutNanos,
+    private _LockManager(_LocalDatabase db, LockUpgradeRule lockUpgradeRule, long timeoutNanos,
                         int numHashTables)
     {
         mDatabaseRef = db == null ? null : new WeakReference<>(db);
@@ -75,7 +75,7 @@ final class _LockManager {
 
     final Index indexById(long id) {
         if (mDatabaseRef != null) {
-            Database db = mDatabaseRef.get();
+            _LocalDatabase db = mDatabaseRef.get();
             if (db != null) {
                 try {
                     return db.indexById(id);
@@ -160,7 +160,7 @@ final class _LockManager {
         LockHT ht = getLockHT(lock.mHashCode);
         ht.acquireExclusive();
         try {
-            return lock.transferExclusive(locker, pending);
+            return lock.transferExclusive(locker, ht, pending);
         } finally {
             ht.releaseExclusive();
         }
@@ -169,12 +169,14 @@ final class _LockManager {
     /**
      * Mark a lock as referencing a ghosted entry. Caller must ensure that lock
      * is already exclusively held.
+     *
+     * @param frame must be bound to the ghost position
      */
-    final void ghosted(_Tree tree, byte[] key, int hash) {
+    final void ghosted(long indexId, byte[] key, int hash, _CursorFrame.Ghost frame) {
         LockHT ht = getLockHT(hash);
         ht.acquireExclusive();
         try {
-            ht.lockFor(tree.mId, key, hash).mSharedLockOwnersObj = tree;
+            ht.lockFor(indexId, key, hash).mSharedLockOwnersObj = frame;
         } finally {
             ht.releaseExclusive();
         }
@@ -187,7 +189,7 @@ final class _LockManager {
         if (result.isHeld()) {
             return locker;
         }
-        throw locker.failed(result, mDefaultTimeoutNanos);
+        throw locker.failed(TYPE_SHARED, result, mDefaultTimeoutNanos, hash);
     }
 
     final _Locker lockExclusiveLocal(long indexId, byte[] key, int hash)
@@ -199,7 +201,7 @@ final class _LockManager {
         if (result.isHeld()) {
             return locker;
         }
-        throw locker.failed(result, mDefaultTimeoutNanos);
+        throw locker.failed(TYPE_EXCLUSIVE, result, mDefaultTimeoutNanos, hash);
     }
 
     final _Locker localLocker() {
@@ -223,7 +225,7 @@ final class _LockManager {
     }
 
     final static int hash(long indexId, byte[] key) {
-        return (int) Hasher.hash(indexId, key);
+        return Hasher.hash32(indexId, key);
     }
 
     LockHT getLockHT(int hash) {

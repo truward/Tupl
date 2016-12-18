@@ -21,6 +21,8 @@ import java.io.DataOutput;
 import java.io.InterruptedIOException;
 import java.io.IOException;
 
+import java.util.concurrent.ThreadLocalRandom;
+
 import static org.cojen.tupl.PageOps.*;
 import static org.cojen.tupl.Utils.*;
 
@@ -51,20 +53,25 @@ class Tree implements View, Index {
     // Id is null for registry.
     final byte[] mIdBytes;
 
-    // Name is null for all internal trees.
-    volatile byte[] mName;
-
     // Although tree roots can be created and deleted, the object which refers
     // to the root remains the same. Internal state is transferred to/from this
     // object when the tree root changes.
     final Node mRoot;
 
-    Tree(LocalDatabase db, long id, byte[] idBytes, byte[] name, Node root) {
+    // Name is null for all internal trees.
+    volatile byte[] mName;
+
+    // Linked list of stubs, which are created when the root node is deleted. They need to
+    // stick around indefinitely, to ensure that any bound cursors still function normally.
+    // When tree height increases again, the stub is replaced with a real node. Root node must
+    // be latched exclusively when modifying this list.
+    private Node mStubTail;
+
+    Tree(LocalDatabase db, long id, byte[] idBytes, Node root) {
         mDatabase = db;
         mLockManager = db.mLockManager;
         mId = id;
         mIdBytes = idBytes;
-        mName = name;
         mRoot = root;
     }
 
@@ -111,6 +118,11 @@ class Tree implements View, Index {
     }
 
     @Override
+    public Transaction newTransaction(DurabilityMode durabilityMode) {
+        return mDatabase.newTransaction(durabilityMode);
+    }
+
+    @Override
     public long count(byte[] lowKey, byte[] highKey) throws IOException {
         TreeCursor cursor = new TreeCursor(this, Transaction.BOGUS);
         TreeCursor high = null;
@@ -153,6 +165,8 @@ class Tree implements View, Index {
         // before releasing the root latch. Also, Node.used is not invoked for the root node,
         // because it cannot be evicted.
 
+        ThreadLocalRandom rnd = ThreadLocalRandom.current();
+
         while (!node.isLeaf()) {
             int childPos;
             try {
@@ -175,7 +189,7 @@ class Tree implements View, Index {
                     if (node.mSplit != null) {
                         node = node.mSplit.selectNode(node, key);
                     }
-                    node.used();
+                    node.used(rnd);
                     continue;
                 }
 
@@ -637,7 +651,7 @@ class Tree implements View, Index {
         TreeCursor cursor = new TreeCursor(this, Transaction.BOGUS);
         try {
             cursor.autoload(false);
-            cursor.firstAny();
+            cursor.first(); // must start with loaded key
             int height = cursor.height();
             if (!observer.indexBegin(view, height)) {
                 cursor.reset();
@@ -759,29 +773,44 @@ class Tree implements View, Index {
      * @return delete task
      */
     final Runnable drop(boolean mustBeEmpty) throws IOException {
-        Node root = mRoot;
-        root.acquireExclusive();
+        // Acquire early to avoid deadlock when moving tree to trash.
+        CommitLock.Shared shared = mDatabase.commitLock().acquireShared();
+
+        Node root;
         try {
-            if (root.mPage == p_closedTreePage()) {
-                throw new ClosedIndexException();
+            root = mRoot;
+            root.acquireExclusive();
+        } catch (Throwable e) {
+            shared.release();
+            throw e;
+        }
+
+        try {
+            try {
+                if (root.mPage == p_closedTreePage()) {
+                    throw new ClosedIndexException();
+                }
+
+                if (mustBeEmpty && (!root.isLeaf() || root.hasKeys())) {
+                    // Note that this check also covers the transactional case, because deletes
+                    // store ghosts. The message could be more accurate, but it would require
+                    // scanning the whole index looking for ghosts. Using LockMode.UNSAFE
+                    // deletes it's possible to subvert the transactional case, allowing the
+                    // drop to proceed. The rollback logic in UndoLog accounts for this,
+                    // ignoring undo operations for missing indexes. Preventing the drop in
+                    // this case isn't worth the trouble, because UNSAFE is what it is.
+                    throw new IllegalStateException("Cannot drop a non-empty index");
+                }
+
+                if (isInternal(mId)) {
+                    throw new IllegalStateException("Cannot close an internal index");
+                }
+            } catch (Throwable e) {
+                shared.release();
+                throw e;
             }
 
-            if (mustBeEmpty && (!root.isLeaf() || root.hasKeys())) {
-                // Note that this check also covers the transactional case, because deletes
-                // store ghosts. The message could be more accurate, but it would require
-                // scanning the whole index looking for ghosts. Using LockMode.UNSAFE deletes
-                // it's possible to subvert the transactional case, allowing the drop to
-                // proceed. The rollback logic in UndoLog accounts for this, ignoring undo
-                // operations for missing indexes. Preventing the drop in this case isn't worth
-                // the trouble, because UNSAFE is what it is.
-                throw new IllegalStateException("Cannot drop a non-empty index");
-            }
-
-            if (isInternal(mId)) {
-                throw new IllegalStateException("Cannot close an internal index");
-            }
-
-            return mDatabase.deleteTree(this);
+            return mDatabase.deleteTree(this, shared);
         } finally {
             root.releaseExclusive();
         }
@@ -938,80 +967,6 @@ class Tree implements View, Index {
     }
 
     /**
-     * Non-transactionally insert an entry as the highest overall. Intended for filling up a
-     * new tree with ordered entries.
-     *
-     * @param key new highest key; no existing key can be greater than or equal to it
-     * @param frame frame bound to the tree leaf node
-     */
-    final void append(byte[] key, byte[] value, CursorFrame frame) throws IOException {
-        try {
-            final CommitLock commitLock = mDatabase.commitLock();
-            commitLock.lock();
-            Node node = latchDirty(frame);
-            try {
-                // TODO: inline and specialize
-                node.insertLeafEntry(frame, this, frame.mNodePos, key, value);
-                frame.mNodePos += 2;
-
-                while (node.mSplit != null) {
-                    if (node == mRoot) {
-                        node.finishSplitRoot();
-                        break;
-                    }
-                    Node childNode = node;
-                    frame = frame.mParentFrame;
-                    node = frame.mNode;
-                    // Latch coupling upwards is fine because nothing should be searching a
-                    // tree which is filling up.
-                    node.acquireExclusive();
-                    // TODO: inline and specialize
-                    node.insertSplitChildRef(frame, this, frame.mNodePos, childNode);
-                }
-            } finally {
-                node.releaseExclusive();
-                commitLock.unlock();
-            }
-        } catch (Throwable e) {
-            throw closeOnFailure(mDatabase, e);
-        }
-    }
-
-    /**
-     * Returns the frame node latched exclusively and marked dirty.
-     */
-    private Node latchDirty(CursorFrame frame) throws IOException {
-        final LocalDatabase db = mDatabase;
-        Node node = frame.mNode;
-        node.acquireExclusive();
-
-        if (db.shouldMarkDirty(node)) {
-            CursorFrame parentFrame = frame.mParentFrame;
-            try {
-                if (parentFrame == null) {
-                    db.doMarkDirty(this, node);
-                } else {
-                    // Latch coupling upwards is fine because nothing should be searching a tree
-                    // which is filling up.
-                    Node parentNode = latchDirty(parentFrame);
-                    try {
-                        if (db.markDirty(this, node)) {
-                            parentNode.updateChildRefId(parentFrame.mNodePos, node.mId);
-                        }
-                    } finally {
-                        parentNode.releaseExclusive();
-                    }
-                }
-            } catch (Throwable e) {
-                node.releaseExclusive();
-                throw e;
-            }
-        }
-
-        return node;
-    }
-
-    /**
      * Caller must hold exclusive latch and it must verify that node has
      * split. Node latch is released if an exception is thrown.
      *
@@ -1027,16 +982,85 @@ class Tree implements View, Index {
     final Node finishSplit(final CursorFrame frame, Node node) throws IOException {
         while (true) {
             if (node == mRoot) {
-                try {
-                    node.finishSplitRoot();
-                } finally {
-                    node.releaseExclusive();
+                // When tree loses a level, a stub node remains for any cursors which were
+                // bound to the old root. When a level is added back, the cursors bound to the
+                // stub must rebind to the new root node. This happens when the
+                // Node.finishSplitRoot method is called, but the stub node must be latched
+                // exclusively for this to work correctly. The latch direction is in reverse
+                // order, and so deadlock is possible. To avoid this, fail fast and retry as
+                // necessary. Whenever the node latch is released and reacquired, the split
+                // state must be checked again. Another thread might have finished the split.
+
+                Node stub = mStubTail;
+
+                if (stub == null) {
+                    try {
+                        node.finishSplitRoot();
+                    } finally {
+                        node.releaseExclusive();
+                    }
+                } else withStub: {
+                    if (!stub.tryAcquireExclusive()) {
+                        // Try to relatch in a different order.
+
+                        node.releaseExclusive();
+                        stub.acquireExclusive();
+
+                        try {
+                            node = frame.tryAcquireExclusive();
+                        } catch (Throwable e) {
+                            stub.releaseExclusive();
+                            throw e;
+                        }
+
+                        if (node == null) {
+                            // Latch attempt failed, so start over.
+                            stub.releaseExclusive();
+                            break withStub;
+                        }
+
+                        if (node.mSplit == null) {
+                            // Split is finished now.
+                            stub.releaseExclusive();
+                            return node;
+                        }
+
+                        if (node != mRoot || stub != mStubTail) {
+                            // Too much state has changed, so start over.
+                            node.releaseExclusive();
+                            stub.releaseExclusive();
+                            break withStub;
+                        }
+                    }
+
+                    try {
+                        node.finishSplitRoot();
+                        mStubTail = stub.mNodeMapNext;
+
+                        // Note: Some cursor frames might still be bound to the stub. This is
+                        // because the cursor is popping up to the stub, as part of an
+                        // iteration or findNearby operation. Since popping to a stub is
+                        // equivalent to popping past the root, the cursor operation is able to
+                        // handle this. Iteration will finish normally, and findNearby will
+                        // start over from the root. Also see stub comments in PageOps.
+                    } finally {
+                        node.releaseExclusive();
+                        stub.releaseExclusive();
+                    }
                 }
 
-                // Must return the node as referenced by the frame, which is no longer the root.
-                return frame.acquireExclusive();
+                // Must always relatch node as referenced by the frame.
+                node = frame.acquireExclusive();
+
+                if (node.mSplit != null) {
+                    // Still split.
+                    continue;
+                }
+
+                return node;
             }
 
+            // TODO: Quick check by trying to latch upwards. Give up if parent is split.
             final CursorFrame parentFrame = frame.mParentFrame;
             node.releaseExclusive();
 
@@ -1059,6 +1083,25 @@ class Tree implements View, Index {
                 parentNode.insertSplitChildRef(parentFrame, this, parentFrame.mNodePos, node);
             }
         }
+    }
+
+    /**
+     * Caller must have exclusively latched the tree root node instance and the lone child node.
+     *
+     * @param child must not be a leaf node
+     */
+    final void rootDelete(Node child) throws IOException {
+        // Allocate stuff early in case of out of memory, and while root is latched. Note that
+        // stub is assigned a NodeUsageList. Because the stub isn't in the list, attempting to
+        // update its position within it has no effect. Note too that the stub isn't placed
+        // into the database node map.
+        Node stub = new Node(mRoot.mUsageList);
+
+        // Stub isn't in the node map, so use this pointer field to link the stubs together.
+        stub.mNodeMapNext = mStubTail;
+        mStubTail = stub;
+
+        mRoot.rootDelete(this, child, stub);
     }
 
     final LocalTransaction check(Transaction txn) throws IllegalArgumentException {
@@ -1189,9 +1232,9 @@ class Tree implements View, Index {
                             mDin.readFully(key);
 
                             if (mTaskCount < mTaskLimit) spawn: {
-                                Task task;
+                                Thread task;
                                 try {
-                                    task = new Task();
+                                    task = new Thread(() -> prime());
                                 } catch (Throwable e) {
                                     break spawn;
                                 }
@@ -1216,13 +1259,6 @@ class Tree implements View, Index {
                     mTaskCount--;
                     notifyAll();
                 }
-            }
-        }
-
-        class Task extends Thread {
-            @Override
-            public void run() {
-                prime();
             }
         }
     }

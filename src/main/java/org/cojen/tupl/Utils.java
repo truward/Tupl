@@ -21,8 +21,8 @@ import java.io.File;
 import java.io.IOException;
 
 import java.util.Arrays;
-import java.util.Random;
 
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 import static java.lang.System.arraycopy;
@@ -50,22 +50,30 @@ class Utils extends org.cojen.tupl.io.Utils {
         return (i | (i >> 16)) + 1;
     }
 
-    private static int cSeedMix = new Random().nextInt();
+    static long roundUpPower2(long i) {
+        i--;
+        i |= i >> 1;
+        i |= i >> 2;
+        i |= i >> 4;
+        i |= i >> 8;
+        i |= i >> 16;
+        return (i | (i >> 32)) + 1;
+    }
 
     /**
      * @return non-zero random number, suitable for Xorshift RNG or object hashcode
      */
     static int randomSeed() {
-        int seed = Long.hashCode(Thread.currentThread().getId()) ^ cSeedMix;
-        while (seed == 0) {
-            seed = new Random().nextInt();
-        }
-        cSeedMix = nextRandom(seed);
+        ThreadLocalRandom rnd = ThreadLocalRandom.current();
+        int seed;
+        do {
+            seed = rnd.nextInt();
+        } while (seed == 0);
         return seed;
     }
 
     /**
-     * @param seed must not be zero
+     * @param seed ideally not zero (zero will be returned if so)
      * @return next random number using Xorshift RNG by George Marsaglia (also next seed)
      */
     static int nextRandom(int seed) {
@@ -73,6 +81,16 @@ class Utils extends org.cojen.tupl.io.Utils {
         seed ^= seed >>> 17;
         seed ^= seed << 5;
         return seed;
+    }
+
+    /**
+     * Returns a strong non-zero hash code for the given value.
+     */
+    static int nzHash(long v) {
+        int h = hash64to32(v);
+        // n is -1 if h is 0; n is 0 for all other cases
+        int n = ((h & -h) - 1) >> 31;
+        return h + n;
     }
 
     /**
@@ -87,6 +105,21 @@ class Utils extends org.cojen.tupl.io.Utils {
         v = (v + (v << 2)) + (v << 4); // v * 21
         v = v ^ (v >>> 28);
         return v + (v << 31);
+    }
+
+    /* 
+      32-bit variant
+      https://gist.github.com/lh3/59882d6b96166dfc3d8d
+    */
+
+    static int hash64to32(long v) {
+        v = v = (v << 18) - v - 1; // (~v) + (v << 18)
+        v = v ^ (v >>> 31);
+        v = (v + (v << 2)) + (v << 4); // v * 21
+        v = v ^ (v >>> 11);
+        v = v + (v << 6);
+        v = v ^ (v >>> 22);
+        return (int) v;
     }
 
     /*
@@ -154,15 +187,29 @@ class Utils extends org.cojen.tupl.io.Utils {
     }
 
     static String timeoutMessage(long nanosTimeout, DatabaseException ex) {
+        String msg;
         if (nanosTimeout == 0) {
-            return "Never waited";
+            msg = "Never waited";
         } else if (nanosTimeout < 0) {
-            return "Infinite wait";
+            msg = "Infinite wait";
         } else {
             StringBuilder b = new StringBuilder("Waited ");
             appendTimeout(b, ex.getTimeout(), ex.getUnit());
+            Object att = ex.getOwnerAttachment();
+            if (att != null) {
+                appendAttachment(b, att);
+            }
             return b.toString();
         }
+
+        Object att = ex.getOwnerAttachment();
+        if (att != null) {
+            StringBuilder b = new StringBuilder(msg);
+            appendAttachment(b, att);
+            msg = b.toString();
+        }
+
+        return msg;
     }
 
     static void appendTimeout(StringBuilder b, long timeout, TimeUnit unit) {
@@ -179,6 +226,10 @@ class Utils extends org.cojen.tupl.io.Utils {
             }
             b.append(unitStr);
         }
+    }
+
+    private static void appendAttachment(StringBuilder b, Object att) {
+        b.append("; owner attachment: ").append(att);
     }
 
     /**
@@ -338,7 +389,7 @@ class Utils extends org.cojen.tupl.io.Utils {
      */
     public static long decodeSignedVarLong(byte[] b, IntegerRef offsetRef) {
         long v = decodeUnsignedVarLong(b, offsetRef);
-        return ((v & 1) != 0) ? ((~(v >> 1)) | (1 << 31)) : (v >>> 1);
+        return ((v & 1) != 0) ? ((~(v >> 1)) | (1L << 63)) : (v >>> 1);
     }
 
     /**

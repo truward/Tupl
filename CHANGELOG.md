@@ -1,13 +1,79 @@
 Changelog
 =========
 
-v1.3.4
+v1.3.10.2 (2016-12-10)
+---------
+* Fix deadlock when dropping an index.
+* Fix maximum size calculation when fragmenting a value to fit into a split node. Entries with
+  large keys would sometimes be rejected.
+
+v1.3.10.1 (2016-12-05)
+---------
+* Fix regression bug created by earlier fix which allowed a split node to become empty.
+
+v1.3.10 (2016-12-03)
+-------
+* Fix bug which allowed a split node to become empty.
+* Optimized transactional deletes.
+
+v1.3.9 (2016-11-27)
+------
+* Avoid looping indefinitely if random search encounters ghosts.
+* Fix split insert handling of large keys and values which caused an overflow.
+* Fix edge cases when storing large values into split nodes, and the values must be fragmented.
+* Add method to reset a transaction due to an exception.
+* Added a convenience method to create transactions from view instances.
+* Cursor exceptions suppressed when database is closed.
+* Optimize handling of shared commit lock reentrancy by eliminating a contended write.
+* Optimize generation of random numbers, used internally.
+* Update node MRU position less aggressively, improving performance due to fewer memory writes.
+
+v1.3.8 (2016-10-29)
+------
+* Fix memory leaks when processing replicated transactions.
+* Use a larger redo log buffer, to better cope with stalls when writing to the file.
+* Stripe transaction state to improve concurrency.
+* Don't run shutdown hooks when panicking, to avoid deadlocks.
+* More replicated rollback improvements.
+
+v1.3.7.1 (2016-10-22)
+--------
+* Fix when updating a large value into a newly split node.
+* Fix race conditions when handling tree node stubs.
+* Replicated transaction rollback should propagate immediately.
+
+v1.3.7 (2016-10-15)
+------
+* Fix corruption caused by cursor traversal into split nodes.
+* Fix corruption caused by broken cursor binding following a node split and merge.
+* Fix latch upgrade race condition when deleting a ghost.
+* Fix race conditions when handling parent-before-child node evictions.
+* Fix race conditions when deleting and creating root node.
+* Fix snapshot handling when using fully mapped mode.
+* Fix stub node implementation when using fully mapped mode.
+* Add support for attaching objects to transactions, for tracking them.
+* Detect deadlocks when lock timeout is zero, for non-try variants.
+* Suppress transaction exceptions from cleanup methods when database is closed.
+
+v1.3.6 (2016-09-05)
+------
+* Fix updating of large entries into crammed nodes, which caused entries to get lost.
+* Fix database lock file retention issue.
+* Refine Cursor lock method to ensure that the latest value is retrieved.
+* Fix key order check when running verification.
+* Added file preallocation option. Allows early handling of disk full exceptions to prevent
+  crashes with SIGBUS in the case where the file is mmap'ed and a delayed block allocation fails
+  due to no space left on device.
+
+v1.3.5 (2016-08-28)
 ------
 * Fix NullPointerException when too many nodes are unevictable. A CacheExhaustedException
   should be thrown instead.
 * Fix deadlock between node split and checkpoint.
 * Fix "Already in NodeMap" exception when loading fragmented nodes.
-* Add some default View and Cursor method implementations.
+* Fix for a rare assertion error when deleting the root node of a tree.
+* Added a Cursor lock method, for manual lock control.
+* Added some default View and Cursor method implementations.
 
 v1.3.3.1 (2016-08-02)
 --------

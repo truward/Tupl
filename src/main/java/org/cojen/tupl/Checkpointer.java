@@ -32,8 +32,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 final class Checkpointer implements Runnable {
     private static final int STATE_INIT = 0, STATE_RUNNING = 1, STATE_CLOSED = 2;
 
-    private static int cThreadCounter;
-
     private final AtomicInteger mSuspendCount;
     private final ReferenceQueue<AbstractDatabase> mRefQueue;
     private final WeakReference<AbstractDatabase> mDatabaseRef;
@@ -65,18 +63,13 @@ final class Checkpointer implements Runnable {
      * @param initialCheckpoint true to perform an initial checkpoint in the new thread
      */
     void start(boolean initialCheckpoint) {
-        int num;
-        synchronized (Checkpointer.class) {
-            num = ++cThreadCounter;
-        }
-
         if (!initialCheckpoint) {
             mState = STATE_RUNNING;
         }
 
         Thread t = new Thread(this);
         t.setDaemon(true);
-        t.setName("Checkpointer-" + (num & 0xffffffffL));
+        t.setName("Checkpointer-" + Long.toUnsignedString(t.getId()));
         t.start();
 
         mThread = t;
@@ -96,7 +89,7 @@ final class Checkpointer implements Runnable {
 
             if (mRefQueue != null) {
                 mRefQueue.remove();
-                close();
+                close(null);
                 return;
             }
 
@@ -110,7 +103,7 @@ final class Checkpointer implements Runnable {
 
                 AbstractDatabase db = mDatabaseRef.get();
                 if (db == null) {
-                    close();
+                    close(null);
                     return;
                 }
 
@@ -141,7 +134,7 @@ final class Checkpointer implements Runnable {
                     Utils.closeQuietly(null, db, e);
                 }
             }
-            close();
+            close(e);
         }
     }
 
@@ -165,7 +158,7 @@ final class Checkpointer implements Runnable {
                 }
 
                 if (mShutdownHook == null) {
-                    Thread hook = new Thread(() -> Checkpointer.this.close());
+                    Thread hook = new Thread(() -> Checkpointer.this.close(null));
                     try {
                         Runtime.getRuntime().addShutdownHook(hook);
                         mShutdownHook = hook;
@@ -211,7 +204,7 @@ final class Checkpointer implements Runnable {
     /**
      * @return thread to interrupt, when no checkpoint is in progress
      */
-    Thread close() {
+    Thread close(Throwable cause) {
         mState = STATE_CLOSED;
         mDatabaseRef.enqueue();
         mDatabaseRef.clear();
@@ -226,12 +219,14 @@ final class Checkpointer implements Runnable {
                 mShutdownHook = null;
             }
 
-            if (mToShutdown == null) {
+            // Only run shutdown hooks if cleanly closing, to avoid deadlocks.
+            if (mToShutdown == null || cause != null) {
                 toShutdown = null;
             } else {
                 toShutdown = new ArrayList<>(mToShutdown);
-                mToShutdown = null;
             }
+
+            mToShutdown = null;
         }
 
         if (toShutdown != null) {

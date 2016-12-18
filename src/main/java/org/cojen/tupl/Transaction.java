@@ -157,6 +157,22 @@ public interface Transaction {
     void reset() throws IOException;
 
     /**
+     * Reset the transaction due to the given cause. This provides an opportunity to prevent
+     * this transaction from being used any further. No exception is thrown when invoking this
+     * method.
+     *
+     * @param cause pass a cause to reset and disable the transaction; pass null to simply
+     * reset the transaction and ignore any exception when doing so
+     */
+    default void reset(Throwable cause) {
+        try {
+            reset();
+        } catch (Throwable e) {
+            // Ignore.
+        }
+    }
+
+    /**
      * Attempts to acquire a shared lock for the given key, denying exclusive
      * locks. If return value is {@link LockResult#alreadyOwned owned}, transaction
      * already owns a strong enough lock, and no extra unlock should be
@@ -438,4 +454,28 @@ public interface Transaction {
      * @throws IllegalStateException if no locks held, or if last lock is shared
      */
     void unlockToUpgradable();
+
+    /**
+     * Attach an arbitrary object to this transaction instance, for tracking it. Attachments
+     * can become visible to other threads as a result of a {@link LockTimeoutException}. A
+     * happens-before relationship is guaranteed only if the attachment is set before the
+     * associated lock is acquired. Also, the LockTimeoutException constructor calls toString
+     * on the attachment, and includes it in the message. A non-default toString implementation
+     * must consider thread-safety.
+     *
+     * @param obj the object to be attached; may be null
+     */
+    default void attach(Object obj) {
+        // Throw an exception for compatibility. All known implementations support the feature.
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Returns any attachment which was set earlier.
+     *
+     * @return the current attachment, or null if none
+     */
+    default Object attachment() {
+        return null;
+    }
 }

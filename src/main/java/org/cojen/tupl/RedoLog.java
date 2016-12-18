@@ -27,7 +27,6 @@ import java.io.OutputStream;
 
 import java.util.LinkedHashSet;
 import java.util.Set;
-import java.util.Random;
 
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.FileChannel;
@@ -99,7 +98,7 @@ final class RedoLog extends RedoWriter {
             long logId, long redoPos, boolean replay)
         throws IOException
     {
-        super(4096, 0);
+        super(65536, 0);
 
         mCrypto = crypto;
         mBaseFile = baseFile;

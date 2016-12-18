@@ -41,6 +41,16 @@ public interface View {
     public Cursor newCursor(Transaction txn);
 
     /**
+     * Returns a new transaction which is compatible with this view. If the provided durability
+     * mode is null, a default mode is selected.
+     *
+     * @throws UnsupportedOperationException if not supported
+     */
+    public default Transaction newTransaction(DurabilityMode durabilityMode) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Non-transactionally counts the number of entries within the given range. Implementations
      * of this method typically scan over the entries, and so it shouldn't be expected to run
      * in constant time.
@@ -193,6 +203,7 @@ public interface View {
     {
         Cursor c = newCursor(txn);
         try {
+            c.autoload(oldValue != null);
             c.find(key);
             if (!Arrays.equals(c.value(), oldValue)) {
                 return false;
@@ -401,7 +412,14 @@ public interface View {
      * @throws NullPointerException if key is null
      */
     public default View viewGe(byte[] key) {
-        return BoundedView.viewGe(ViewUtils.checkOrdering(this), key);
+        Ordering ordering = getOrdering();
+        if (ordering == Ordering.ASCENDING) {
+            return BoundedView.viewGe(this, key);
+        } else if (ordering == Ordering.DESCENDING) {
+            return BoundedView.viewGe(viewReverse(), key).viewReverse();
+        } else {
+            throw new UnsupportedOperationException("Unsupported ordering: " + ordering);
+        }
     }
 
     /**
@@ -416,7 +434,14 @@ public interface View {
      * @throws NullPointerException if key is null
      */
     public default View viewGt(byte[] key) {
-        return BoundedView.viewGt(ViewUtils.checkOrdering(this), key);
+        Ordering ordering = getOrdering();
+        if (ordering == Ordering.ASCENDING) {
+            return BoundedView.viewGt(this, key);
+        } else if (ordering == Ordering.DESCENDING) {
+            return BoundedView.viewGt(viewReverse(), key).viewReverse();
+        } else {
+            throw new UnsupportedOperationException("Unsupported ordering: " + ordering);
+        }
     }
 
     /**
@@ -431,7 +456,14 @@ public interface View {
      * @throws NullPointerException if key is null
      */
     public default View viewLe(byte[] key) {
-        return BoundedView.viewLe(ViewUtils.checkOrdering(this), key);
+        Ordering ordering = getOrdering();
+        if (ordering == Ordering.ASCENDING) {
+            return BoundedView.viewLe(this, key);
+        } else if (ordering == Ordering.DESCENDING) {
+            return BoundedView.viewLe(viewReverse(), key).viewReverse();
+        } else {
+            throw new UnsupportedOperationException("Unsupported ordering: " + ordering);
+        }
     }
 
     /**
@@ -446,7 +478,14 @@ public interface View {
      * @throws NullPointerException if key is null
      */
     public default View viewLt(byte[] key) {
-        return BoundedView.viewLt(ViewUtils.checkOrdering(this), key);
+        Ordering ordering = getOrdering();
+        if (ordering == Ordering.ASCENDING) {
+            return BoundedView.viewLt(this, key);
+        } else if (ordering == Ordering.DESCENDING) {
+            return BoundedView.viewLt(viewReverse(), key).viewReverse();
+        } else {
+            throw new UnsupportedOperationException("Unsupported ordering: " + ordering);
+        }
     }
 
     /**
@@ -463,7 +502,14 @@ public interface View {
      * @throws IllegalArgumentException if trim is longer than prefix
      */
     public default View viewPrefix(byte[] prefix, int trim) {
-        return BoundedView.viewPrefix(ViewUtils.checkOrdering(this), prefix, trim);
+        Ordering ordering = getOrdering();
+        if (ordering == Ordering.ASCENDING) {
+            return BoundedView.viewPrefix(this, prefix, trim);
+        } else if (ordering == Ordering.DESCENDING) {
+            return BoundedView.viewPrefix(viewReverse(), prefix, trim).viewReverse();
+        } else {
+            throw new UnsupportedOperationException("Unsupported ordering: " + ordering);
+        }
     }
 
     /**

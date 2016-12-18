@@ -30,6 +30,7 @@ import java.util.Random;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.After;
 import org.junit.Before;
@@ -278,6 +279,140 @@ public class EnduranceTest {
             mDb.deleteIndex(ix).run();
             mDb.checkpoint();
         }
+    }
+
+    @Test
+    public void churn() throws Exception {
+        // Stress test which ensures that cursor position doesn't break when concurrent
+        // insert/delete operations are making structural tree changes.
+
+        DatabaseConfig config = new DatabaseConfig()
+            .pageSize(512)
+            .directPageAccess(false);
+
+        decorate(config);
+
+        Database db = Database.open(config);
+
+        Index ix = db.openIndex("test");
+
+        final AtomicReference<Exception> failure = new AtomicReference<>();
+
+        Thread mutator = new Thread(() -> {
+            try {
+                while (true) {
+                    for (int i=0; i<120; i++) {
+                        ix.store(Transaction.BOGUS, ("key-" + i).getBytes(),
+                                 ("value-" + i).getBytes());
+                    }
+                    for (int i=0; i<120; i++) {
+                        ix.store(Transaction.BOGUS, ("key-" + i).getBytes(), null);
+                    }
+                }
+            } catch (Exception e) {
+                failure.set(e);
+            }
+        });
+
+        mutator.start();
+
+        for (int i=0; i<100_000; i++) {
+            Cursor c = ix.newCursor(Transaction.BOGUS);
+            try {
+                for (c.first(); c.key() != null; c.next()) {
+                }
+            } catch (Exception e) {
+                e.printStackTrace(System.out);
+                System.exit(1);
+            } finally {
+                c.reset();
+            }
+        }
+
+        assertNull(failure.get());
+
+        // Again in reverse.
+
+        for (int i=0; i<100_000; i++) {
+            Cursor c = ix.newCursor(Transaction.BOGUS);
+            try {
+                for (c.last(); c.key() != null; c.previous()) {
+                }
+            } catch (Exception e) {
+                e.printStackTrace(System.out);
+                System.exit(1);
+            } finally {
+                c.reset();
+            }
+        }
+
+        assertNull(failure.get());
+
+        db.close();
+
+        mutator.join();
+    }
+
+    @Test
+    public void ghosts() throws Exception {
+        // Runs concurrent transactional inserts and deletes, making sure that the ghost
+        // deletion code handles splits correctly.
+
+        DatabaseConfig config = new DatabaseConfig()
+            .directPageAccess(false)
+            .durabilityMode(DurabilityMode.NO_FLUSH);
+
+        decorate(config);
+
+        mDb = newTempDatabase(config);
+        mIx = mDb.openIndex("test");
+
+        AtomicBoolean stop = new AtomicBoolean();
+
+        class Task extends Thread {
+            @Override
+            public void run() {
+                Random rnd = new Random();
+                try {
+                    byte[][] keys = new byte[1000][];
+
+                    while (!stop.get()) {
+                        for (int i=0; i<keys.length; i++) {
+                            keys[i] = randomStr(rnd, 10);
+                            mIx.store(null, keys[i], randomStr(rnd, 10, 100));
+                        }
+
+                        Transaction txn = mDb.newTransaction();
+                        try {
+                            for (int i=0; i<keys.length; i++) {
+                                mIx.store(txn, keys[i], null);
+                            }
+                            txn.commit();
+                        } finally {
+                            txn.reset();
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace(System.out);
+                    System.exit(1);
+                }
+            }
+        }
+
+        Task[] tasks = new Task[2];
+        for (int i=0; i<tasks.length; i++) {
+            (tasks[i] = new Task()).start();
+        }
+
+        Thread.sleep(10_000);
+
+        stop.set(true);
+
+        for (Task t : tasks) {
+            t.join();
+        }
+
+        assertEquals(0, mIx.count(null, null));
     }
 
     @Test

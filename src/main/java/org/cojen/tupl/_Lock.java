@@ -97,6 +97,7 @@ final class _Lock {
         LatchCondition queueSX = mQueueSX;
         if (queueSX != null) {
             if (nanosTimeout == 0) {
+                locker.mWaitingFor = this;
                 return TIMED_OUT_LOCK;
             }
         } else {
@@ -105,6 +106,7 @@ final class _Lock {
                 return r;
             }
             if (nanosTimeout == 0) {
+                locker.mWaitingFor = this;
                 return TIMED_OUT_LOCK;
             }
             mQueueSX = queueSX = new LatchCondition();
@@ -189,6 +191,7 @@ final class _Lock {
         LatchCondition queueU = mQueueU;
         if (queueU != null) {
             if (nanosTimeout == 0) {
+                locker.mWaitingFor = this;
                 return TIMED_OUT_LOCK;
             }
         } else {
@@ -198,6 +201,7 @@ final class _Lock {
                 return ACQUIRED;
             }
             if (nanosTimeout == 0) {
+                locker.mWaitingFor = this;
                 return TIMED_OUT_LOCK;
             }
             mQueueU = queueU = new LatchCondition();
@@ -291,6 +295,7 @@ final class _Lock {
                 if (ur == ACQUIRED) {
                     unlockUpgradable();
                 }
+                locker.mWaitingFor = this;
                 return TIMED_OUT_LOCK;
             }
         } else {
@@ -302,6 +307,7 @@ final class _Lock {
                 if (ur == ACQUIRED) {
                     unlockUpgradable();
                 }
+                locker.mWaitingFor = this;
                 return TIMED_OUT_LOCK;
             }
             mQueueSX = queueSX = new LatchCondition();
@@ -518,50 +524,161 @@ final class _Lock {
      * @param latch might be briefly released and re-acquired
      */
     void deleteGhost(Latch latch) {
-        // TODO: Unlock due to rollback can be optimized. It never needs to
-        // actually delete ghosts, because the undo actions replaced
-        // them. Calling _TreeCursor.deleteGhost performs a pointless search.
+        // TODO: Unlock due to rollback can be optimized. It never needs to actually delete
+        // ghosts, because the undo actions replaced them.
 
         Object obj = mSharedLockOwnersObj;
-        if (!(obj instanceof _Tree)) {
+        if (!(obj instanceof _CursorFrame.Ghost)) {
             return;
         }
 
-        _Tree tree = (_Tree) obj;
+        final _LocalDatabase db = mOwner.getDatabase();
+        if (db == null) {
+            // Database was closed.
+            return;
+        }
 
-        try {
-            while (true) {
-                _TreeCursor c = new _TreeCursor(tree, null);
-                c.autoload(false);
-                byte[] key = mKey;
-                mSharedLockOwnersObj = null;
+        final _CursorFrame.Ghost frame = (_CursorFrame.Ghost) obj;
+        mSharedLockOwnersObj = null;
+        byte[] key = mKey;
+        boolean unlatched = false;
 
-                // Release to prevent deadlock, since additional latches are
-                // required for delete.
-                latch.releaseExclusive();
-                try {
-                    if (c.deleteGhost(key)) {
-                        break;
+        CommitLock.Shared shared = db.commitLock().tryAcquireShared();
+        if (shared == null) {
+            // Release lock management latch to prevent deadlock.
+            latch.releaseExclusive();
+            unlatched = true;
+            shared = db.commitLock().acquireShared();
+        }
+
+        doDelete: try {
+            _Node node = frame.mNode;
+            if (node != null) latchNode: {
+                if (!unlatched) {
+                    while (node.tryAcquireExclusive()) {
+                        _Node actualNode = frame.mNode;
+                        if (actualNode == node) {
+                            break latchNode;
+                        }
+                        node.releaseExclusive();
+                        node = actualNode;
+                        if (node == null) {
+                            break latchNode;
+                        }
                     }
-                    // Reopen closed index.
-                    tree = (_Tree) tree.mDatabase.indexById(tree.mId);
-                    if (tree == null) {
-                        // Assume index was deleted.
-                        break;
-                    }
-                } finally {
-                    latch.acquireExclusive();
+
+                    // Release lock management latch to prevent deadlock.
+                    latch.releaseExclusive();
+                    unlatched = true;
                 }
+
+                node = frame.acquireExclusiveIfBound();
+            }
+
+            if (node == null) {
+                // Will need to delete the slow way.
+            } else if (!db.isMutable(node)) {
+                // _Node cannot be dirtied without a full cursor, so delete the slow way.
+                node.releaseExclusive();
+                _CursorFrame.popAll(frame);
+            } else {
+                // Frame is still valid and node is mutable, so perform a quick delete.
+
+                int pos = frame.mNodePos;
+                if (pos < 0) {
+                    // Already deleted.
+                    node.releaseExclusive();
+                    _CursorFrame.popAll(frame);
+                    break doDelete;
+                }
+
+                _Split split = node.mSplit;
+                if (split == null) {
+                    try {
+                        if (node.hasLeafValue(pos) == null) {
+                            // Ghost still exists, so delete it.
+                            node.deleteLeafEntry(pos);
+                            node.postDelete(pos, key);
+                        }
+                    } finally {
+                        node.releaseExclusive();
+                        _CursorFrame.popAll(frame);
+                    }
+                } else {
+                    _Node sibling;
+                    try {
+                        sibling = split.latchSiblingEx();
+                    } catch (Throwable e) {
+                        node.releaseExclusive();
+                        _CursorFrame.popAll(frame);
+                        throw e;
+                    }
+
+                    try {
+                        split.rebindFrame(frame, sibling);
+
+                        _Node actualNode = frame.mNode;
+                        int actualPos = frame.mNodePos;
+
+                        if (actualNode.hasLeafValue(actualPos) == null) {
+                            // Ghost still exists, so delete it.
+                            actualNode.deleteLeafEntry(actualPos);
+                            // Fix existing frames on original node. Other than potentially the
+                            // ghost frame, no frames exist on the sibling.
+                            node.postDelete(pos, key);
+                        }
+                    } finally {
+                        // Pop the frames before releasing the latches, preventing other
+                        // threads from observing a frame bound to the sibling too soon.
+                        _CursorFrame.popAll(frame);
+                        sibling.releaseExclusive();
+                        node.releaseExclusive();
+                    }
+                }
+
+                break doDelete;
+            }
+
+            // Delete the ghost the slow way. Open the index, and then search for the ghost.
+
+            if (!unlatched) {
+                // Release lock management latch to prevent deadlock.
+                latch.releaseExclusive();
+                unlatched = true;
+            }
+
+            while (true) {
+                Index ix = db.anyIndexById(mIndexId);
+                if (!(ix instanceof _Tree)) {
+                    // Assume index was deleted.
+                    break;
+                }
+                _TreeCursor c = new _TreeCursor((_Tree) ix);
+                c.mKeyOnly = true;
+                if (c.deleteGhost(key)) {
+                    break;
+                }
+                // Reopen a closed index.
             }
         } catch (Throwable e) {
-            // Exception indicates that database is borked. Ghost will get
-            // cleaned up when database is re-opened.
-            latch.releaseExclusive();
+            // Exception indicates that database is borked. Ghost will get cleaned up when
+            // database is re-opened.
+            shared.release();
+            if (!unlatched) {
+                // Release lock management latch to prevent deadlock.
+                latch.releaseExclusive();
+            }
             try {
-                Utils.closeQuietly(null, ((_Tree) obj).mDatabase, e);
+                Utils.closeQuietly(null, mOwner.getDatabase(), e);
             } finally {
                 latch.acquireExclusive();
             }
+            return;
+        }
+
+        shared.release();
+        if (unlatched) {
+            latch.acquireExclusive();
         }
     }
 
@@ -570,11 +687,13 @@ final class _Lock {
      * set. Exclusive locks are transferred, and any other type is released. Method must be
      * called by _LockManager with appropriate latch held.
      *
+     * @param ht used to remove this lock if not exclusively held and is no longer used; must
+     * be exclusively held
      * @param pending lock set to add into; can be null initially
      * @return new or original lock set
      * @throws IllegalStateException if lock not held
      */
-    _PendingTxn transferExclusive(_LockOwner locker, _PendingTxn pending) {
+    _PendingTxn transferExclusive(_LockOwner locker, _LockManager.LockHT ht, _PendingTxn pending) {
         if (mLockCount == ~0) {
             // Held exclusively. Must double check expected owner because _Locker tracks _Lock
             // instance multiple times for handling upgrades. Without this check, _Lock can be
@@ -588,14 +707,83 @@ final class _Lock {
                 mOwner = pending;
             }
         } else {
-            // Unlock upgradable or shared lock.
-            unlock(locker, null);
+            // Unlock upgradable or shared lock. Note that ht isn't passed along, because no
+            // ghost needs to be deleted. An exclusive lock would have been held and detected
+            // above. If this assertion is wrong, a NullPointerException will be thrown.
+            if (unlock(locker, null)) {
+                ht.remove(this);
+            }
         }
         return pending;
     }
 
     boolean matches(long indexId, byte[] key, int hash) {
         return mHashCode == hash && mIndexId == indexId && Arrays.equals(mKey, key);
+    }
+
+    /**
+     * Find an exclusive owner attachment, or the first found shared owner attachment. Might
+     * acquire and release a shared latch to access the shared owner attachment.
+     *
+     * @param locker pass null if already latched
+     * @param lockType TYPE_SHARED, TYPE_UPGRADABLE, or TYPE_EXCLUSIVE
+     */
+    Object findOwnerAttachment(_Locker locker, int lockType, int hash) {
+        // See note in _DeadlockDetector regarding unlatched access to this _Lock.
+
+        _LockOwner owner = mOwner;
+        if (owner != null) {
+            Object att = owner.attachment();
+            if (att != null) {
+                return att;
+            }
+        }
+
+        if (lockType != _LockManager.TYPE_EXCLUSIVE) {
+            // Only an exclusive lock request can be blocked by shared locks.
+            return null;
+        }
+
+        Object sharedObj = mSharedLockOwnersObj;
+        if (sharedObj == null) {
+            return null;
+        }
+
+        if (sharedObj instanceof _LockOwner) {
+            return ((_LockOwner) sharedObj).attachment();
+        }
+
+        if (sharedObj instanceof LockOwnerHTEntry[]) {
+            if (locker != null) {
+                // Need a latch to safely check the shared lock owner hashtable.
+                _LockManager manager = locker.mManager;
+                if (manager != null) {
+                    _LockManager.LockHT ht = manager.getLockHT(hash);
+                    ht.acquireShared();
+                    try {
+                        return findOwnerAttachment(null, lockType, hash);
+                    } finally {
+                        ht.releaseShared();
+                    }
+                }
+            } else {
+                LockOwnerHTEntry[] entries = (LockOwnerHTEntry[]) sharedObj;
+
+                for (int i=entries.length; --i>=0; ) {
+                    for (LockOwnerHTEntry e = entries[i]; e != null; e = e.mNext) {
+                        owner = e.mOwner;
+                        if (owner != null) {
+                            Object att = owner.attachment();
+                            if (att != null) {
+                                return att;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     private boolean isSharedLockOwner(_LockOwner locker) {

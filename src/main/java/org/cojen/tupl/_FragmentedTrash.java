@@ -73,7 +73,7 @@ final class _FragmentedTrash {
         } catch (Throwable e) {
             try {
                 // Always expected to rethrow an exception, not necessarily the original.
-                txn.borked(e, false);
+                txn.borked(e, false, true);
             } catch (Throwable e2) {
                 e = e2;
             }
@@ -201,12 +201,12 @@ final class _FragmentedTrash {
                 cursor.load();
                 byte[] value = cursor.value();
                 long fragmented = p_transfer(value);
-                commitLock.lock();
+                CommitLock.Shared shared = commitLock.acquireShared();
                 try {
                     db.deleteFragments(fragmented, 0, value.length);
                     cursor.store(null);
                 } finally {
-                    commitLock.unlock();
+                    shared.release();
                     p_delete(fragmented);
                 }
                 cursor.next();
@@ -240,12 +240,12 @@ final class _FragmentedTrash {
                     byte[] value = cursor.value();
                     long fragmented = p_transfer(value);
                     try {
-                        commitLock.lock();
+                        CommitLock.Shared shared = commitLock.acquireShared();
                         try {
                             db.deleteFragments(fragmented, 0, value.length);
                             cursor.store(null);
                         } finally {
-                            commitLock.unlock();
+                            shared.release();
                         }
                     } finally {
                         p_delete(fragmented);

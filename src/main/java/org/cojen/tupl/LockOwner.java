@@ -16,7 +16,7 @@
 
 package org.cojen.tupl;
 
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Base class for any object which can own or acquire locks.
@@ -24,17 +24,22 @@ import java.util.concurrent.atomic.AtomicInteger;
  * @author Brian S O'Neill
  */
 /*P*/
-class LockOwner extends AtomicInteger /* for hashCode */ {
+abstract class LockOwner implements DatabaseAccess { // weak access to database
+    private final int mHash;
+
     // LockOwner is currently waiting to acquire this lock. Used for deadlock detection.
     Lock mWaitingFor;
 
+    LockOwner() {
+        mHash = ThreadLocalRandom.current().nextInt();
+    }
+
     @Override
     public final int hashCode() {
-        while (true) {
-            int hash = get();
-            if (hash != 0 || compareAndSet(0, hash = Utils.randomSeed())) {
-                return hash;
-            }
-        }
+        return mHash;
     }
+
+    public abstract void attach(Object obj);
+
+    public abstract Object attachment();
 }

@@ -103,7 +103,7 @@ public class LargeValueTest {
 
     @Test
     public void testUpdateLarger() throws Exception {
-        // Special regresion test, discovered when updating a fragmented value
+        // Special regression test, discovered when updating a fragmented value
         // to be slightly larger. The inline content length was between 1 and
         // 128 before and after. The node was split to make room, but the split
         // direction guess was wrong. This caused updateLeafValue to be called
@@ -136,10 +136,253 @@ public class LargeValueTest {
         assertTrue(ix.verify(null));
     }
 
+    @Test
+    public void testUpdateLargerAgain() throws Exception {
+        // Another update regression test. Update must not double split the node.
+
+        Index ix = mDb.openIndex("test");
+
+        Random rnd = new Random(123456);
+
+        byte[][] keys = new byte[4][];
+        byte[][] values = new byte[keys.length][];
+
+        for (int i=0; i<keys.length; i++) {
+            keys[i] = new byte[300];
+            rnd.nextBytes(keys[i]);
+            // Define key ordering.
+            keys[i][0] = (byte) i;
+        }
+
+        // Store carefully crafted entries, to force an incorrectly balanced split.
+        int[] sizes = {2200, 10, 300, 300};
+        assertEquals(keys.length, sizes.length);
+        for (int i=0; i<keys.length; i++) { 
+            values[i] = new byte[sizes[i]];
+            rnd.nextBytes(values[i]);
+            ix.store(Transaction.BOGUS, keys[i], values[i]);
+        }
+
+        // Update a value to be larger, forcing a split.
+        values[1] = new byte[2570];
+        rnd.nextBytes(values[1]);
+        ix.store(Transaction.BOGUS, keys[1], values[1]);
+
+        // Verify that all the entries are correct.
+        assertEquals(keys.length, ix.count(null, null));
+        for (int i=0; i<keys.length; i++) {
+            byte[] actual = ix.load(Transaction.BOGUS, keys[i]);
+            fastAssertArrayEquals(values[i], actual);
+        }
+    }
+
+    @Test
+    public void testUpdateLargerAgainAgain() throws Exception {
+        // Yet another update regression test. Update of large value into a split node must
+        // consider the key size when fragmenting.
+
+        Index ix = mDb.openIndex("test");
+
+        Random rnd = new Random(123456);
+
+        byte[][] keys = new byte[4][];
+        byte[][] values = new byte[keys.length][];
+
+        for (int i=0; i<keys.length; i++) {
+            keys[i] = new byte[300];
+            rnd.nextBytes(keys[i]);
+            // Define key ordering.
+            keys[i][0] = (byte) i;
+        }
+
+        // Store carefully crafted entries, to force an incorrectly balanced split.
+        int[] sizes = {1720, 0, 840, 300};
+        assertEquals(keys.length, sizes.length);
+        for (int i=0; i<keys.length; i++) { 
+            values[i] = new byte[sizes[i]];
+            rnd.nextBytes(values[i]);
+            ix.store(Transaction.BOGUS, keys[i], values[i]);
+        }
+
+        // Update a value to be larger, forcing a split. Value will be inline encoded if key
+        // size isn't considered, and it won't fit.
+        values[1] = new byte[2030];
+        rnd.nextBytes(values[1]);
+        ix.store(Transaction.BOGUS, keys[1], values[1]);
+
+        // Verify that all the entries are correct.
+        assertEquals(keys.length, ix.count(null, null));
+        for (int i=0; i<keys.length; i++) {
+            byte[] actual = ix.load(Transaction.BOGUS, keys[i]);
+            fastAssertArrayEquals(values[i], actual);
+        }
+    }
+
+    @Test
+    public void testInsertLargeKeyOverflow() throws Exception {
+        // Regression test. Insert a large key/value pair which causes an imbalanced split and
+        // also forces the value to be fragmented. Due to a bug, the fragmented key was not
+        // accounted for properly, and so the allocated space for the new entry was calculated
+        // incorrectly. It was one byte smaller, and the value overflowed the entry slot. This
+        // caused an IndexOutOfBoundsException or it would corrupt the node.
+
+        Index ix = mDb.openIndex("test");
+
+        ix.store(null, key(1), new byte[2005]);
+        ix.store(null, key(3), new byte[2000]);
+        ix.store(null, key(2500, 2), new byte[3000]);
+
+        // Without the fix, this would fail because the garbage field didn't match actual usage.
+        assertTrue(ix.verify(new VerificationObserver()));
+    }
+
+    @Test
+    public void testInsertLargeKeyNoFit() throws Exception {
+        // Regression test. Insert a large key/value pair which causes an imbalanced split and
+        // also forces the value to be fragmented. The fragmented value should be placed into
+        // the node that has more space.
+
+        Index ix = mDb.openIndex("test");
+
+        ix.store(null, key(1), new byte[11]);
+        ix.store(null, key(2), new byte[3010]);
+        ix.store(null, key(4), new byte[1020]);
+
+        // Without the fix, this would cause an assertion error to be thrown.
+        ix.store(null, key(1030, 3), new byte[2025]);
+    }
+
+    @Test
+    public void testInsertLargeKeyLateFragment() throws Exception {
+        // Create a split imbalance which causes the inserted value to be stored into the
+        // original left node, and it must be fragmented to fit.
+
+        Index ix = mDb.openIndex("test");
+
+        ix.store(null, key(500, 1), new byte[10]);
+        ix.store(null, key(500, 2), new byte[10]);
+        ix.store(null, key(1500, 4), new byte[10]);
+        ix.store(null, key(1500, 5), new byte[10]);
+
+        ix.store(null, key(3), new byte[3050]);
+
+        assertTrue(ix.verify(new VerificationObserver()));
+    }
+
+    @Test
+    public void testInsertLargeKeyLateFragment2() throws Exception {
+        // Create a split imbalance which causes the inserted value to be stored into the
+        // original right node, and it must be fragmented to fit.
+
+        Index ix = mDb.openIndex("test");
+
+        ix.store(null, key(1020, 0), new byte[10]);
+        ix.store(null, key(800, 2), new byte[10]);
+        ix.store(null, key(800, 4), new byte[10]);
+        ix.store(null, key(800, 6), new byte[10]);
+        ix.store(null, key(800, 8), new byte[10]);
+
+        ix.store(null, key(1), new byte[3050]);
+
+        assertTrue(ix.verify(new VerificationObserver()));
+    }
+
+    @Test
+    public void testUpdateLargeKeyLateFragment() throws Exception {
+        // Create a split imbalance which causes the updated value to be stored into the
+        // original left node, and it must be fragmented to fit.
+
+        Index ix = mDb.openIndex("test");
+
+        ix.store(null, key(1500, 1), new byte[10]);
+        ix.store(null, key(1500, 2), new byte[10]);
+        ix.store(null, key(3), new byte[0]);
+        ix.store(null, key(500, 4), new byte[10]);
+        ix.store(null, key(500, 5), new byte[10]);
+
+        ix.store(null, key(3), new byte[3050]);
+
+        assertTrue(ix.verify(new VerificationObserver()));
+    }
+
+    @Test
+    public void testUpdateLargeKeyLateFragment2() throws Exception {
+        // Create a split imbalance which causes the updated value to be stored into the
+        // original right node, and it must be fragmented to fit.
+
+        Index ix = mDb.openIndex("test");
+
+        ix.store(null, key(1500, 2), new byte[10]);
+        ix.store(null, key(3), new byte[0]);
+        ix.store(null, key(500, 4), new byte[10]);
+        ix.store(null, key(1500, 5), new byte[10]);
+
+        ix.store(null, key(3), new byte[3050]);
+
+        assertTrue(ix.verify(new VerificationObserver()));
+    }
+
+    @Test
+    public void testUpdateLargeKeyLateFragment3() throws Exception {
+        // Create a split imbalance which causes the updated value to be stored into the
+        // original right node, and it must be fragmented to fit. This is a regression test
+        // which ensures that some entries remain in the original node.
+
+        Index ix = mDb.openIndex("test");
+
+        // First fill the node with non-zeros and delete the entries. If an illegal region of
+        // the node is read, it will cause an ArrayIndexOutOfBoundsException to be thrown.
+        for (int i=0; i<4; i++) {
+            ix.store(null, key(i), filledValue(1020));
+        }
+        for (int i=0; i<4; i++) {
+            ix.store(null, key(i), null);
+        }
+
+        ix.store(null, filledKey(943, 0), filledValue(944));
+        ix.store(null, filledKey(332, 1), filledValue(12));
+        ix.store(null, filledKey(597, 2), filledValue(592));
+
+        ix.store(null, filledKey(332, 1), filledValue(2672));
+
+        assertTrue(ix.verify(new VerificationObserver()));
+    }
+
+    @Test
+    public void testInsertLargeValueEarlyFragment() throws Exception {
+        // Ensure that loop which moves entries into a newly split node moves as much as
+        // possible and not too much.
+
+        Index ix = mDb.openIndex("test");
+
+        ix.store(null, key(1000, 0), new byte[1060]);
+        ix.store(null, key(2), new byte[20]);
+
+        ix.store(null, key(2026, 1), new byte[1060]);
+
+        assertTrue(ix.verify(new VerificationObserver()));
+    }
+
     private static byte[] key(int i) {
-        byte[] key = new byte[4];
+        return key(4, i);
+    }
+
+    private static byte[] key(int size, int i) {
+        byte[] key = new byte[size];
         Utils.encodeIntBE(key, 0, i);
         return key;
+    }
+
+    private static byte[] filledKey(int size, int i) {
+        byte[] key = filledValue(size);
+        Utils.encodeIntBE(key, 0, i);
+        return key;
+    }
+
+    private static byte[] filledValue(int size) {
+        byte[] value = new byte[size];
+        Arrays.fill(value, (byte) -1);
+        return value;
     }
 
     @Test

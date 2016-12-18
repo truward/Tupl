@@ -29,15 +29,32 @@ final class _PendingTxn extends _LockOwner {
     private _Lock[] mRest;
     private int mRestSize;
 
+    _TransactionContext mTxnContext;
     long mTxnId;
     long mCommitPos;
     _UndoLog mUndoLog;
     boolean mHasFragmentedTrash;
+    private Object mAttachment;
 
     _PendingTxn mPrev;
 
     _PendingTxn(_Lock first) {
         mFirst = first;
+    }
+
+    @Override
+    public final _LocalDatabase getDatabase() {
+        return mUndoLog.getDatabase();
+    }
+
+    @Override
+    public void attach(Object obj) {
+        mAttachment = obj;
+    }
+
+    @Override
+    public Object attachment() {
+        return mAttachment;
     }
 
     /**
@@ -78,7 +95,7 @@ final class _PendingTxn extends _LockOwner {
         _UndoLog undo = mUndoLog;
         if (undo != null) {
             undo.truncate(true);
-            db.unregister(undo);
+            mTxnContext.unregister(undo);
         }
 
         if (mHasFragmentedTrash) {
@@ -101,7 +118,7 @@ final class _PendingTxn extends _LockOwner {
         unlockAll(db);
 
         if (undo != null) {
-            db.unregister(undo);
+            mTxnContext.unregister(undo);
         }
     }
 
